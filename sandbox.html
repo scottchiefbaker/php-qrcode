@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>QR Code Generator</title>
+<style>
+	:root {
+		--bg: #fff;
+		--fg: #222;
+		--border: #ccc;
+		--img-border: #ddd;
+		--muted: #999;
+		--error: #b00;
+		--field-bg: #fff;
+	}
+	@media (prefers-color-scheme: dark) {
+		:root {
+			--bg: #1e1e1e;
+			--fg: #eee;
+			--border: #444;
+			--img-border: #333;
+			--muted: #888;
+			--error: #f66;
+			--field-bg: #2a2a2a;
+		}
+	}
+	body { font-family: sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; background: var(--bg); color: var(--fg); }
+	label { display: block; margin-bottom: 4px; font-weight: bold; }
+	fieldset { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 16px; }
+	input[type=text], select { width: 100%; padding: 6px; box-sizing: border-box; background: var(--field-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; }
+	.field { margin-bottom: 12px; }
+	#preview { margin-top: 16px; text-align: center; }
+	#preview img { border: 1px solid var(--img-border); max-width: 100%; image-rendering: pixelated; background: #fff; }
+	#status { color: var(--muted); }
+	#error { color: var(--error); }
+	button { padding: 8px 16px; }
+	a { text-decoration: none; color: #4da3ff; }
+	a:hover { text-decoration: underline; }
+	input[type=range] { accent-color: #0af; }
+</style>
+</head>
+<body>
+	<h1><a href="https://github.com/psyon/php-qrcode">QR Code Generator</a></h1>
+
+<fieldset>
+	<legend>Options</legend>
+
+	<div class="field">
+		<label for="data">Data</label>
+		<input type="text" id="data" value="https://www.example.com" autocomplete="off">
+	</div>
+
+	<div class="field">
+		<label for="redundancy">Redundancy Level</label>
+		<select id="redundancy">
+			<option value="qrl">Low ~7%</option>
+			<option value="qrm" selected>Medium ~15%</option>
+			<option value="qrq">Quartile ~25%</option>
+			<option value="qrh">High ~30%</option>
+		</select>
+	</div>
+
+	<div class="field">
+		<label for="scale">Scaling Factor</label>
+		<div style="display:flex; align-items:center; gap:8px;">
+			<input type="range" id="scale" value="8" min="1" max="15" step="1" style="flex:1; width:auto;">
+			<span id="scaleValue">8</span>
+		</div>
+	</div>
+
+	<div class="field">
+		<label for="density">Density (0.0 - 1.0)</label>
+		<div style="display:flex; align-items:center; gap:8px;">
+			<input type="range" id="density" value="1.0" min="0" max="1" step="0.05" style="flex:1; width:auto;">
+			<span id="densityValue">1.00</span>
+		</div>
+	</div>
+
+	<div class="field">
+		<label>Format</label>
+		<label style="font-weight:normal; display:inline; margin-right:12px;"><input type="radio" name="format" value="png" id="formatPng" checked> PNG</label>
+		<label style="font-weight:normal; display:inline;"><input type="radio" name="format" value="svg" id="formatSvg"> SVG</label>
+	</div>
+
+	<button id="generate" type="button">Generate</button>
+	<span style="display: none" id="status"></span>
+</fieldset>
+
+<div id="preview">
+	<div id="error"></div>
+	<img id="result" alt="">
+</div>
+
+<script>
+(function () {
+	"use strict";
+
+	var url = "qrcode.php";
+	var dataEl   = document.getElementById("data");
+	var redEl    = document.getElementById("redundancy");
+	var scaleEl  = document.getElementById("scale");
+	var scaleVal = document.getElementById("scaleValue");
+	var densEl   = document.getElementById("density");
+	var densVal  = document.getElementById("densityValue");
+	var formatPngEl = document.getElementById("formatPng");
+	var formatSvgEl = document.getElementById("formatSvg");
+	var imgEl    = document.getElementById("result");
+	var errorEl  = document.getElementById("error");
+	var statusEl = document.getElementById("status");
+	var btn      = document.getElementById("generate");
+	var timer    = null;
+
+	function getFormat() {
+		return formatSvgEl.checked ? "svg" : "png";
+	}
+
+	function buildParams() {
+		var params = [
+			"d=" + encodeURIComponent(dataEl.value),
+			"s=" + encodeURIComponent(redEl.value),
+			"sf=" + encodeURIComponent(scaleEl.value),
+			"md=" + encodeURIComponent(densEl.value)
+		];
+		if (getFormat() === "svg") {
+			params.push("f=" + encodeURIComponent("svg"));
+		}
+		return params.join("&");
+	}
+
+	function setError(msg) {
+		errorEl.textContent = msg || "";
+	}
+
+	function generate() {
+		clearTimeout(timer);
+		statusEl.textContent = "Generating...";
+		setError("");
+
+		var xhr = new XMLHttpRequest();
+		xhr.open("GET", url + "?" + buildParams(), true);
+		xhr.responseType = "blob";
+
+		xhr.onload = function () {
+			if (xhr.status === 200 && xhr.response) {
+				if (imgEl.src) {
+					URL.revokeObjectURL(imgEl.src);
+				}
+				imgEl.src = URL.createObjectURL(xhr.response);
+				statusEl.textContent = "Done";
+			} else {
+				setError("Request failed (HTTP " + xhr.status + ")");
+				statusEl.textContent = "";
+			}
+		};
+
+		xhr.onerror = function () {
+			setError("Network error");
+			statusEl.textContent = "";
+		};
+
+		xhr.send();
+	}
+
+	btn.addEventListener("click", generate);
+
+	[dataEl, redEl, scaleEl, densEl].forEach(function (el) {
+		el.addEventListener("input", function () {
+			if (el === densEl) {
+				densVal.textContent = parseFloat(densEl.value).toFixed(2);
+			} else if (el === scaleEl) {
+				scaleVal.textContent = scaleEl.value;
+			}
+			clearTimeout(timer);
+			timer = setTimeout(generate, 400);
+		});
+	});
+
+	[formatPngEl, formatSvgEl].forEach(function (el) {
+		el.addEventListener("change", function () {
+			clearTimeout(timer);
+			timer = setTimeout(generate, 100);
+		});
+	});
+
+	generate();
+	densVal.textContent = parseFloat(densEl.value).toFixed(2);
+	scaleVal.textContent = scaleEl.value;
+})();
+</script>
+</body>
+</html>
