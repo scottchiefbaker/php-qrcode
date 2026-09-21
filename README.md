@@ -125,9 +125,6 @@ Custom colors and high error correction:
 
 ![Styled QR code](examples/styled.png)
 
-The same output is also available as [SVG](examples/hello.svg) and
-[styled SVG](examples/styled.svg).
-
 ## 🎮 Sandbox
 
 [`sandbox.html`](sandbox.html) is an interactive playground for trying
