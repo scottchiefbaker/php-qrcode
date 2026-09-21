@@ -38,11 +38,13 @@ need:
 
 require 'qrcode.php';
 
-$generator = new QRCode('https://example.com', [
+$opts = [
     's'  => 'qr-m',
     'sf' => 8,
     'p'  => 16,
-]);
+];
+
+$generator = new QRCode('https://example.com', $opts);
 
 // Write a PNG to the current output stream.
 $generator->output_image();
@@ -59,7 +61,9 @@ SVG output is available without the GD extension:
 
 require 'qrcode.php';
 
-$generator = new QRCode('https://example.com', ['s' => 'qr-h']);
+$opts = ['s' => 'qr-h'];
+
+$generator = new QRCode('https://example.com', $opts);
 
 $svg = $generator->render_svg();
 file_put_contents('qrcode.svg', $svg);
