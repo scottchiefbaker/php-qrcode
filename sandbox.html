@@ -31,6 +31,8 @@
 	.field { margin-bottom: 12px; }
 	#preview { margin-top: 16px; text-align: center; }
 	#preview img { border: 1px solid var(--img-border); max-width: 100%; image-rendering: pixelated; background: #fff; }
+	#urlRow { display: flex; gap: 8px; margin-top: 16px; }
+	#imageUrl { flex: 1; }
 	#status { color: var(--muted); }
 	#error { color: var(--error); }
 	button { padding: 8px 16px; }
@@ -88,7 +90,11 @@
 
 <div id="preview">
 	<div id="error"></div>
-	<img id="result" alt="">
+	<div id="urlRow">
+		<input type="text" id="imageUrl" readonly aria-label="Image URL">
+		<button id="copyUrl" type="button">Copy</button>
+	</div>
+	<img id="result" alt="QR code preview">
 </div>
 
 <script>
@@ -108,7 +114,11 @@
 	var errorEl  = document.getElementById("error");
 	var statusEl = document.getElementById("status");
 	var btn      = document.getElementById("generate");
+	var urlField = document.getElementById("imageUrl");
+	var copyBtn  = document.getElementById("copyUrl");
+	var copyTimer = null;
 	var timer    = null;
+	var seq      = 0;
 
 	function getFormat() {
 		return formatSvgEl.checked ? "svg" : "png";
@@ -136,32 +146,62 @@
 		statusEl.textContent = "Generating...";
 		setError("");
 
-		var xhr = new XMLHttpRequest();
-		xhr.open("GET", url + "?" + buildParams(), true);
-		xhr.responseType = "blob";
+		var full = new URL(url, location.href);
+		full.search = buildParams();
+		var href = full.href;
+		var mySeq = ++seq;
 
-		xhr.onload = function () {
-			if (xhr.status === 200 && xhr.response) {
-				if (imgEl.src) {
-					URL.revokeObjectURL(imgEl.src);
-				}
-				imgEl.src = URL.createObjectURL(xhr.response);
-				statusEl.textContent = "Done";
-			} else {
-				setError("Request failed (HTTP " + xhr.status + ")");
-				statusEl.textContent = "";
-			}
+		// Ignore stale load/error events (e.g. from the src reset below).
+		imgEl.onload = function () {
+			if (mySeq !== seq) return;
+			statusEl.textContent = "Done";
+			setError("");
 		};
-
-		xhr.onerror = function () {
-			setError("Network error");
+		imgEl.onerror = function () {
+			if (mySeq !== seq) return;
+			setError("Failed to load image (check the URL / PHP is running)");
 			statusEl.textContent = "";
 		};
+		// Force a reload if the URL is unchanged (browser won't re-fire load).
+		if (imgEl.src === href) {
+			imgEl.src = "";
+		}
+		imgEl.src = href;
+		urlField.value = href;
+	}
 
-		xhr.send();
+	function copyUrl() {
+		var value = urlField.value;
+		function done(ok) {
+			copyBtn.textContent = ok ? "Copied!" : "Copy failed";
+			clearTimeout(copyTimer);
+			copyTimer = setTimeout(function () {
+				copyBtn.textContent = "Copy";
+			}, 1500);
+		}
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(value).then(function () {
+				done(true);
+			}, function () {
+				done(fallbackCopy());
+			});
+		} else {
+			done(fallbackCopy());
+		}
+	}
+
+	function fallbackCopy() {
+		urlField.select();
+		urlField.setSelectionRange(0, urlField.value.length);
+		try {
+			return document.execCommand("copy");
+		} catch (e) {
+			return false;
+		}
 	}
 
 	btn.addEventListener("click", generate);
+	copyBtn.addEventListener("click", copyUrl);
 
 	[dataEl, redEl, scaleEl, densEl].forEach(function (el) {
 		el.addEventListener("input", function () {
