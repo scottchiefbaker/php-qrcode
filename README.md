@@ -119,16 +119,6 @@ Custom colors and high error correction:
 
 The same output is also available as [SVG](examples/hello.svg) and [styled SVG](examples/styled.svg).
 
-## 🧪 Testing
-
-`qrcode-test.html` is a browser-based test page covering different data types and error correction levels. Serve the repository with PHP's built-in web server and open the test page:
-
-```sh
-php -S localhost:8000
-```
-
-Then visit <http://localhost:8000/qrcode-test.html>.
-
 ## 📜 License and credits
 
 This project is licensed under the [MIT License](LICENSE).
