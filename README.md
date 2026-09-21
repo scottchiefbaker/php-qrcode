@@ -3,11 +3,14 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-777bb4.svg?logo=php&logoColor=white)](https://www.php.net/)
 
-Generate QR codes in pure PHP. `php-qrcode` is a small, single-file QR code generator with PNG and SVG output.
+Generate QR codes in pure PHP. `php-qrcode` is a small, single-file QR
+code generator with PNG and SVG output.
 
 ## 🔍 What is php-qrcode?
 
-`php-qrcode` can be used either as a PHP class in an application or as a standalone HTTP endpoint. It is distributed as one file and does not require Composer:
+`php-qrcode` can be used either as a PHP class in an application or as
+a standalone HTTP endpoint. It is distributed as one file and does not
+require Composer:
 
 - PNG output through PHP's GD extension
 - SVG output without GD
@@ -15,7 +18,8 @@ Generate QR codes in pure PHP. `php-qrcode` is a small, single-file QR code gene
 - QR error correction levels L, M, Q, and H
 - Configurable size, padding, colors, module density, and quiet area
 
-This project is a stripped-down version of [kreativekorp/barcode](https://github.com/kreativekorp/barcode).
+This project is a stripped-down version of
+[kreativekorp/barcode](https://github.com/kreativekorp/barcode).
 
 ## 📦 Installation
 
@@ -29,7 +33,8 @@ There is no installation step beyond copying the file.
 
 ### As a PHP class
 
-Include `qrcode.php`, create a `QRCode`, and render the format you need:
+Include `qrcode.php`, create a `QRCode`, and render the format you
+need:
 
 ```php
 <?php
@@ -68,13 +73,15 @@ file_put_contents('qrcode.svg', $svg);
 
 ### As an HTTP endpoint
 
-When `qrcode.php` is requested directly, it reads the data and options from GET or POST parameters:
+When `qrcode.php` is requested directly, it reads the data and options
+from GET or POST parameters:
 
 ```text
 qrcode.php?d=HELLO%20WORLD&s=qr-m&sf=8&p=12
 ```
 
-PNG is the default format. Request SVG with either `f=svg` or `format=svg`:
+PNG is the default format. Request SVG with either `f=svg` or
+`format=svg`:
 
 ```text
 qrcode.php?d=https%3A%2F%2Fexample.com&s=qr-h&format=svg
@@ -82,7 +89,8 @@ qrcode.php?d=https%3A%2F%2Fexample.com&s=qr-h&format=svg
 
 ## 🎛️ Options
 
-Options can be passed to the `QRCode` constructor or supplied as request parameters when using the HTTP endpoint.
+Options can be passed to the `QRCode` constructor or supplied as
+request parameters when using the HTTP endpoint.
 
 | Option | Default | Description |
 | --- | --- | --- |
@@ -117,14 +125,21 @@ Custom colors and high error correction:
 
 ![Styled QR code](examples/styled.png)
 
-The same output is also available as [SVG](examples/hello.svg) and [styled SVG](examples/styled.svg).
+The same output is also available as [SVG](examples/hello.svg) and
+[styled SVG](examples/styled.svg).
 
 ## 🎮 Sandbox
 
-[`sandbox.html`](sandbox.html) is an interactive playground for trying options without writing code. It calls the HTTP endpoint and live-previews the result as you change the data, error correction level, scale, module density, and PNG/SVG format.
+[`sandbox.html`](sandbox.html) is an interactive playground for trying
+options without writing code. It calls the HTTP endpoint and
+live-previews the result as you change the data, error correction
+level, scale, module density, and PNG/SVG format.
 
 ## 📜 License and credits
 
 This project is licensed under the [MIT License](LICENSE).
 
-The QR encoding implementation is based on [Kreative Software's barcode project](https://github.com/kreativekorp/barcode). Portions are Copyright (c) 2016-2018 Kreative Software. Other project portions are Copyright (c) 2019 Donald Becker.
+The QR encoding implementation is based on
+[Kreative Software's barcode project](https://github.com/kreativekorp/barcode).
+Portions are Copyright (c) 2016-2018 Kreative Software. Other project
+portions are Copyright (c) 2019 Donald Becker.
