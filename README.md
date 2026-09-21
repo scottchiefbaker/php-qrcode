@@ -119,6 +119,10 @@ Custom colors and high error correction:
 
 The same output is also available as [SVG](examples/hello.svg) and [styled SVG](examples/styled.svg).
 
+## 🎮 Sandbox
+
+[`sandbox.html`](sandbox.html) is an interactive playground for trying options without writing code. It calls the HTTP endpoint and live-previews the result as you change the data, error correction level, scale, module density, and PNG/SVG format.
+
 ## 📜 License and credits
 
 This project is licensed under the [MIT License](LICENSE).
