@@ -18,9 +18,6 @@ require Composer:
 - QR error correction levels L, M, Q, and H
 - Configurable size, padding, colors, module density, and quiet area
 
-This project is a stripped-down version of
-[kreativekorp/barcode](https://github.com/kreativekorp/barcode).
-
 ## 📦 Installation
 
 1. Copy [`qrcode.php`](qrcode.php) into your project.
