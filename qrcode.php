@@ -1,4 +1,7 @@
 <?php
+
+declare(strict_types=1);
+
 /****************************************************************************\
 
 qrcode.php - Generate QR Codes. MIT license.
@@ -26,50 +29,119 @@ DEALINGS IN THE SOFTWARE.
 
 \****************************************************************************/
 
-if (realpath(__FILE__) == realpath($_SERVER['SCRIPT_FILENAME'])) {
-	$generator = new QRCode($_REQUEST['d'], $_REQUEST);
-	$generator->output_image();
+if (realpath(__FILE__) === realpath($_SERVER['SCRIPT_FILENAME'] ?? '')) {
+	$generator = new QRCode($_REQUEST['d'] ?? '', $_REQUEST);
+	$fRaw = $_REQUEST['f'] ?? $_REQUEST['format'] ?? 'png';
+	$fRaw = is_scalar($fRaw) ? (string)$fRaw : 'png';
+	$fmt = strtolower(trim($fRaw));
+	if ($fmt === 'svg') {
+		$generator->output_svg();
+	} else {
+		$generator->output_image();
+	}
 	exit(0);
 }
 
 class QRCode {
-	private $data;
-	private $options;
-
-	public function __construct($data, $options = []) {
-		$defaults = [
-			's' => 'qrl'
-		];
-
-		if(!is_array($options)) $options = [];
-
-		$this->data    = $data;
-		$this->options = array_merge($defaults, $options);
+	public function __construct(
+		private readonly string $data,
+		private array $options = [],
+	) {
+		$this->options = array_merge(['s' => 'qrl'], $options);
 	}
 
-	public function output_image() {
+	public function output_image(): void {
 		$image = $this->render_image();
 
 		header('Content-Type: image/png');
 		imagepng($image);
 	}
 
-	public function render_image() {
+	public function output_svg(): void {
+		$svg = $this->render_svg();
+
+		header('Content-Type: image/svg+xml');
+		echo $svg;
+	}
+
+	public function render_svg(): string {
 		list($code, $widths, $width, $height, $x, $y, $w, $h) = $this->encode_and_calculate_size($this->data, $this->options);
 
-		$image = imagecreatetruecolor($width, $height);
+		$bg = $this->normalize_color($this->options['bc'] ?? 'FFFFFF', '#FFFFFF');
+		$fg = $this->normalize_color($this->options['fc'] ?? '000000', '#000000');
+
+		$mdRaw = $this->options['md'] ?? 1;
+		$density = (is_scalar($mdRaw) && is_numeric($mdRaw)) ? (float)$mdRaw : 1;
+		list($mw, $mh) = $this->calculate_size($code, $widths);
+		if ($mw && $mh) {
+			$scale = min($w / $mw, $h / $mh);
+			$scale = (($scale > 1) ? floor($scale) : 1);
+			$x = floor($x + ($w - $mw * $scale) / 2);
+			$y = floor($y + ($h - $mh * $scale) / 2);
+		} else {
+			$scale = 1;
+			$x = floor($x + $w / 2);
+			$y = floor($y + $h / 2);
+		}
+
+		$x += $code['q'][3] * $widths[0] * $scale;
+		$y += $code['q'][0] * $widths[0] * $scale;
+		$wh = $widths[1] * $scale;
+
+		$svg = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+		$svg .= '<svg xmlns="http://www.w3.org/2000/svg" width="' . (int)$width . '" height="' . (int)$height . '" viewBox="0 0 ' . (int)$width . ' ' . (int)$height . '" shape-rendering="crispEdges">' . "\n";
+		$svg .= '<rect width="100%" height="100%" fill="' . htmlspecialchars($bg, ENT_QUOTES) . '"/>' . "\n";
+		$d = '';
+		foreach ($code['b'] as $by => $row) {
+			$y1 = $y + $by * $wh;
+			foreach ($row as $bx => $color) {
+				if (!$color) continue;
+				$x1 = $x + $bx * $wh;
+				$rx = (int)floor($x1 + (1 - $density) * $wh / 2);
+				$ry = (int)floor($y1 + (1 - $density) * $wh / 2);
+				$rw = (int)ceil($wh * $density);
+				$rh = (int)ceil($wh * $density);
+				$d .= 'M' . $rx . ' ' . $ry . 'h' . $rw . 'v' . $rh . 'h-' . $rw . 'Z';
+			}
+		}
+		if ($d !== '') {
+			$svg .= '<path d="' . $d . '" fill="' . htmlspecialchars($fg, ENT_QUOTES) . '"/>' . "\n";
+		}
+		$svg .= '</svg>' . "\n";
+
+		return $svg;
+	}
+
+	private function normalize_color(mixed $color, string $fallback): string {
+		$color = is_scalar($color) ? (string)$color : '';
+		$color = preg_replace('/[^0-9A-Fa-f]/', '', $color);
+		if ($color === '' || $color === null) {
+			return $fallback;
+		}
+		if (strlen($color) === 3) {
+			$color = $color[0] . $color[0] . $color[1] . $color[1] . $color[2] . $color[2];
+		}
+		$color = substr(str_pad($color, 6, '0'), 0, 6);
+		return '#' . strtoupper($color);
+	}
+
+	public function render_image(): \GdImage {
+		list($code, $widths, $width, $height, $x, $y, $w, $h) = $this->encode_and_calculate_size($this->data, $this->options);
+
+		$image = imagecreatetruecolor((int)$width, (int)$height);
 		imagesavealpha($image, true);
 
-		$bgcolor = (isset($this->options['bc']) ? $this->options['bc'] : 'FFFFFF');
+		$bgcolor = $this->options['bc'] ?? 'FFFFFF';
 		$bgcolor = $this->allocate_color($image, $bgcolor);
 		imagefill($image, 0, 0, $bgcolor);
 
-		$fgcolor = (isset($this->options['fc']) ? $this->options['fc'] : '000000');
+		$fgcolor = $this->options['fc'] ?? '000000';
 		$fgcolor = $this->allocate_color($image, $fgcolor);
 
 		$colors = array($bgcolor, $fgcolor);
 
-		$density = (isset($this->options['md']) ? (float)$this->options['md'] : 1);
+		$mdRaw = $this->options['md'] ?? 1;
+		$density = (is_scalar($mdRaw) && is_numeric($mdRaw)) ? (float)$mdRaw : 1;
 		list($width, $height) = $this->calculate_size($code, $widths);
 		if ($width && $height) {
 			$scale = min($w / $width, $h / $height);
@@ -94,7 +166,7 @@ class QRCode {
 				$ry = floor($y1 + (1 - $density) * $wh / 2);
 				$rw = ceil($wh * $density);
 				$rh = ceil($wh * $density);
-				imagefilledrectangle($image, $rx, $ry, $rx+$rw-1, $ry+$rh-1, $mc);
+				imagefilledrectangle($image, (int)$rx, (int)$ry, (int)($rx+$rw-1), (int)($ry+$rh-1), $mc);
 			}
 		}
 
@@ -103,48 +175,73 @@ class QRCode {
 
 	/* - - - - INTERNAL FUNCTIONS - - - - */
 
+	private function get_int_option(array $options, string $key, int $default): int {
+		if (!isset($options[$key]) || !is_scalar($options[$key]) || !is_numeric($options[$key])) {
+			return $default;
+		}
+		return (int)$options[$key];
+	}
+
+	private function get_float_option(array $options, string $key, float $default): float {
+		if (!isset($options[$key]) || !is_scalar($options[$key]) || !is_numeric($options[$key])) {
+			return $default;
+		}
+		return (float)$options[$key];
+	}
+
 	private function encode_and_calculate_size($data, $options) {
 		$code = $this->dispatch_encode($data, $options);
 		$widths = array(
-			(isset($options['wq']) ? (int)$options['wq'] : 1),
-			(isset($options['wm']) ? (int)$options['wm'] : 1),
+			$this->get_int_option($options, 'wq', 1),
+			$this->get_int_option($options, 'wm', 1),
 		);
 
 		$size     = $this->calculate_size($code, $widths);
 		$dscale   = 4;
-		$scale    = (isset($options['sf']) ? (float)$options['sf'] : $dscale);
-		$scalex   = (isset($options['sx']) ? (float)$options['sx'] : $scale);
-		$scaley   = (isset($options['sy']) ? (float)$options['sy'] : $scale);
+		$scale    = $this->get_float_option($options, 'sf', $dscale);
+		if ($scale <= 0) $scale = $dscale;
+		$scalex   = $this->get_float_option($options, 'sx', $scale);
+		if ($scalex <= 0) $scalex = $scale;
+		$scaley   = $this->get_float_option($options, 'sy', $scale);
+		if ($scaley <= 0) $scaley = $scale;
 		$dpadding = 0;
-		$padding  = (isset($options['p']) ? (int)$options['p'] : $dpadding);
-		$vert     = (isset($options['pv']) ? (int)$options['pv'] : $padding);
-		$horiz    = (isset($options['ph']) ? (int)$options['ph'] : $padding);
-		$top      = (isset($options['pt']) ? (int)$options['pt'] : $vert);
-		$left     = (isset($options['pl']) ? (int)$options['pl'] : $horiz);
-		$right    = (isset($options['pr']) ? (int)$options['pr'] : $horiz);
-		$bottom   = (isset($options['pb']) ? (int)$options['pb'] : $vert);
+		$padding  = $this->get_int_option($options, 'p', $dpadding);
+		$vert     = $this->get_int_option($options, 'pv', $padding);
+		$horiz    = $this->get_int_option($options, 'ph', $padding);
+		$top      = $this->get_int_option($options, 'pt', $vert);
+		$left     = $this->get_int_option($options, 'pl', $horiz);
+		$right    = $this->get_int_option($options, 'pr', $horiz);
+		$bottom   = $this->get_int_option($options, 'pb', $vert);
 		$dwidth   = ceil($size[0] * $scalex) + $left + $right;
 		$dheight  = ceil($size[1] * $scaley) + $top + $bottom;
-		$iwidth   = (isset($options['w']) ? (int)$options['w'] : $dwidth);
-		$iheight  = (isset($options['h']) ? (int)$options['h'] : $dheight);
+		$iwidth   = $this->get_int_option($options, 'w', (int)$dwidth);
+		$iheight  = $this->get_int_option($options, 'h', (int)$dheight);
+		if ($iwidth <= 0) $iwidth = (int)$dwidth;
+		if ($iheight <= 0) $iheight = (int)$dheight;
+		// Clamp to avoid 0 or negative GdImage dimensions (PHP 8.5 ValueError)
+		$iwidth = max(1, $iwidth);
+		$iheight = max(1, $iheight);
 		$swidth   = $iwidth - $left - $right;
 		$sheight  = $iheight - $top - $bottom;
 
 		return array($code, $widths, $iwidth, $iheight, $left, $top, $swidth, $sheight);
 	}
 
-	private function allocate_color($image, $color) {
+	private function allocate_color(\GdImage $image, mixed $color): int {
+		$color = is_scalar($color) ? (string)$color : '';
 		$color = preg_replace('/[^0-9A-Fa-f]/', '', $color);
 		$r = hexdec(substr($color, 0, 2));
 		$g = hexdec(substr($color, 2, 2));
 		$b = hexdec(substr($color, 4, 2));
-		return imagecolorallocate($image, $r, $g, $b);
+		return imagecolorallocate($image, (int)$r, (int)$g, (int)$b);
 	}
 
 	/* - - - - DISPATCH - - - - */
 
 	private function dispatch_encode($data, $options) {
-		switch (strtolower(preg_replace('/[^A-Za-z0-9]/', '', $options['s']))) {
+		$sRaw = $options['s'] ?? 'qrl';
+		$s = is_scalar($sRaw) ? (string)$sRaw : 'qrl';
+		switch (strtolower(preg_replace('/[^A-Za-z0-9]/', '', $s))) {
 			case 'qrl': return $this->qr_encode($data, 0);
 			case 'qrm': return $this->qr_encode($data, 1);
 			case 'qrq': return $this->qr_encode($data, 2);
