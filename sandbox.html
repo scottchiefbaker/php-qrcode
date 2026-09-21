@@ -30,9 +30,8 @@
 	input[type=text], select { width: 100%; padding: 6px; box-sizing: border-box; background: var(--field-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; }
 	.field { margin-bottom: 12px; }
 	#preview { margin-top: 16px; text-align: center; }
-	#preview img { border: 1px solid var(--img-border); max-width: 100%; image-rendering: pixelated; background: #fff; }
-	#urlRow { display: flex; gap: 8px; margin-top: 16px; }
-	#imageUrl { flex: 1; }
+	#preview img { border: 1px solid var(--img-border); max-width: 100%; image-rendering: pixelated; background: #fff; cursor: pointer; }
+	#copyMsg { min-height: 1.2em; margin-top: 6px; color: var(--muted); }
 	#status { color: var(--muted); }
 	#error { color: var(--error); }
 	button { padding: 8px 16px; }
@@ -90,11 +89,8 @@
 
 <div id="preview">
 	<div id="error"></div>
-	<div id="urlRow">
-		<input type="text" id="imageUrl" readonly aria-label="Image URL">
-		<button id="copyUrl" type="button">Copy</button>
-	</div>
-	<img id="result" alt="QR code preview">
+	<img id="result" alt="QR code preview" title="Click to copy image URL">
+	<div id="copyMsg"></div>
 </div>
 
 <script>
@@ -114,9 +110,8 @@
 	var errorEl  = document.getElementById("error");
 	var statusEl = document.getElementById("status");
 	var btn      = document.getElementById("generate");
-	var urlField = document.getElementById("imageUrl");
-	var copyBtn  = document.getElementById("copyUrl");
-	var copyTimer = null;
+	var copyMsg  = document.getElementById("copyMsg");
+	var msgTimer = null;
 	var timer    = null;
 	var seq      = 0;
 
@@ -167,41 +162,50 @@
 			imgEl.src = "";
 		}
 		imgEl.src = href;
-		urlField.value = href;
 	}
 
-	function copyUrl() {
-		var value = urlField.value;
-		function done(ok) {
-			copyBtn.textContent = ok ? "Copied!" : "Copy failed";
-			clearTimeout(copyTimer);
-			copyTimer = setTimeout(function () {
-				copyBtn.textContent = "Copy";
-			}, 1500);
+	function showCopyMsg(text) {
+		copyMsg.textContent = text;
+		clearTimeout(msgTimer);
+		msgTimer = setTimeout(function () {
+			copyMsg.textContent = "";
+		}, 1500);
+	}
+
+	function fallbackCopy(value) {
+		var ta = document.createElement("textarea");
+		ta.value = value;
+		ta.setAttribute("readonly", "");
+		ta.style.position = "fixed";
+		ta.style.opacity = "0";
+		document.body.appendChild(ta);
+		ta.select();
+		var ok = false;
+		try {
+			ok = document.execCommand("copy");
+		} catch (e) {
+			ok = false;
 		}
+		document.body.removeChild(ta);
+		return ok;
+	}
+
+	function copyImageUrl() {
+		var value = imgEl.src;
+		if (!value) return;
 		if (navigator.clipboard && navigator.clipboard.writeText) {
 			navigator.clipboard.writeText(value).then(function () {
-				done(true);
+				showCopyMsg("URL copied!");
 			}, function () {
-				done(fallbackCopy());
+				showCopyMsg(fallbackCopy(value) ? "URL copied!" : "Copy failed");
 			});
 		} else {
-			done(fallbackCopy());
-		}
-	}
-
-	function fallbackCopy() {
-		urlField.select();
-		urlField.setSelectionRange(0, urlField.value.length);
-		try {
-			return document.execCommand("copy");
-		} catch (e) {
-			return false;
+			showCopyMsg(fallbackCopy(value) ? "URL copied!" : "Copy failed");
 		}
 	}
 
 	btn.addEventListener("click", generate);
-	copyBtn.addEventListener("click", copyUrl);
+	imgEl.addEventListener("click", copyImageUrl);
 
 	[dataEl, redEl, scaleEl, densEl].forEach(function (el) {
 		el.addEventListener("input", function () {
