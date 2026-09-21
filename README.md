@@ -1,79 +1,136 @@
-# qrcode.php
+# php-qrcode
 
-### Generate QR Codes. MIT license.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-777bb4.svg?logo=php&logoColor=white)](https://www.php.net/)
 
-This is a stripped down version of https://github.com/kreativekorp/barcode
+Generate QR codes in pure PHP. `php-qrcode` is a small, single-file QR code generator with PNG and SVG output.
 
-Use from a PHP script:
+## 🔍 What is php-qrcode?
 
-```
-include 'qrcode.php';
+`php-qrcode` can be used either as a PHP class in an application or as a standalone HTTP endpoint. It is distributed as one file and does not require Composer:
 
-$generator = new QRCode($data, $options);
+- PNG output through PHP's GD extension
+- SVG output without GD
+- Automatic numeric, alphanumeric, binary, and Kanji encoding
+- QR error correction levels L, M, Q, and H
+- Configurable size, padding, colors, module density, and quiet area
 
-/* Output directly to standard output. */
+This project is a stripped-down version of [kreativekorp/barcode](https://github.com/kreativekorp/barcode).
+
+## 📦 Installation
+
+1. Copy [`qrcode.php`](qrcode.php) into your project.
+2. Use PHP 8.1 or later.
+3. Enable the GD extension if you need PNG output.
+
+There is no installation step beyond copying the file.
+
+## ✨ Usage
+
+### As a PHP class
+
+Include `qrcode.php`, create a `QRCode`, and render the format you need:
+
+```php
+<?php
+
+require 'qrcode.php';
+
+$generator = new QRCode('https://example.com', [
+    's'  => 'qr-m',
+    'sf' => 8,
+    'p'  => 16,
+]);
+
+// Write a PNG to the current output stream.
 $generator->output_image();
 
-/* Create bitmap image. */
+// Or render a GD image for further processing.
 $image = $generator->render_image();
-imagepng($image);
-imagedestroy($image);
+imagepng($image, 'qrcode.png');
 ```
 
-Use with GET or POST:
+SVG output is available without the GD extension:
 
-```
-qrcode.php?s={symbology}&d={data}&{options}
-```
+```php
+<?php
 
-e.g.
+require 'qrcode.php';
 
-```
-qrcode.php?s=qr&d=HELLO%20WORLD&sf=8&ms=r&md=0.8
-```
+$generator = new QRCode('https://example.com', ['s' => 'qr-h']);
 
-#### Options:
-`s` - Symbology (type of QR code). One of:
-```
-    qr
-    qr-l
-    qr-m
-    qr-q
-    qr-h
+$svg = $generator->render_svg();
+file_put_contents('qrcode.svg', $svg);
+
+// Or send it directly in an HTTP response.
+// $generator->output_svg();
 ```
 
-`d` - Data. Encode in Shift-JIS for kanji mode.
+### As an HTTP endpoint
 
-`w` - Width of image. Overrides `sf` or `sx`.
+When `qrcode.php` is requested directly, it reads the data and options from GET or POST parameters:
 
-`h` - Height of image. Overrides `sf` or `sy`.
+```text
+qrcode.php?d=HELLO%20WORLD&s=qr-m&sf=8&p=12
+```
 
-`sf` - Scale factor. Default is 4.
+PNG is the default format. Request SVG with either `f=svg` or `format=svg`:
 
-`sx` - Horizontal scale factor. Overrides `sf`.
+```text
+qrcode.php?d=https%3A%2F%2Fexample.com&s=qr-h&format=svg
+```
 
-`sy` - Vertical scale factor. Overrides `sf`.
+## 🎛️ Options
 
-`p` - Padding. Default is 0.
+Options can be passed to the `QRCode` constructor or supplied as request parameters when using the HTTP endpoint.
 
-`pv` - Top and bottom padding. Default is value of `p`.
+| Option | Default | Description |
+| --- | --- | --- |
+| `s` | `qrl` | Error correction level: `qr-l`, `qr-m`, `qr-q`, or `qr-h`. Separators are optional, so `qrl` also works. |
+| `d` | empty | Data to encode. For Kanji mode, provide Shift-JIS encoded data. |
+| `w` | calculated | Output width in pixels. Overrides `sf`/`sx`. |
+| `h` | calculated | Output height in pixels. Overrides `sf`/`sy`. |
+| `sf` | `4` | Scale factor for both axes. |
+| `sx` | `sf` | Horizontal scale factor. |
+| `sy` | `sf` | Vertical scale factor. |
+| `p` | `0` | Padding on all sides. |
+| `pv` | `p` | Top and bottom padding. |
+| `ph` | `p` | Left and right padding. |
+| `pt` | `pv` | Top padding. |
+| `pl` | `ph` | Left padding. |
+| `pr` | `ph` | Right padding. |
+| `pb` | `pv` | Bottom padding. |
+| `bc` | `FFFFFF` | Background color as hexadecimal RGB. |
+| `fc` | `000000` | Foreground color as hexadecimal RGB. |
+| `md` | `1` | Module density from `0` to `1`. Lower values create space between modules. |
+| `wq` | `1` | Quiet-area width in units. Set to `0` to remove it. |
+| `wm` | `1` | Width of QR modules in units. |
+| `f` / `format` | `png` | HTTP output format. Use `svg` for SVG; all other values produce PNG. |
 
-`ph` - Left and right padding. Default is value of `p`.
+## 🖼️ Examples
 
-`pt` - Top padding. Default is value of `pv`.
+Default black-and-white PNG:
 
-`pl` - Left padding. Default is value of `ph`.
+![Hello World QR code](examples/hello.png)
 
-`pr` - Right padding. Default is value of `ph`.
+Custom colors and high error correction:
 
-`pb` - Bottom padding. Default is value of `pv`.
+![Styled QR code](examples/styled.png)
 
-`bc` - Background color in `#RRGGBB` format.
+The same output is also available as [SVG](examples/hello.svg) and [styled SVG](examples/styled.svg).
 
-`fc` - Foreground color in `#RRGGBB` format.
+## 🧪 Testing
 
-`md` - Module density. A number between 0 and 1. Default is 1.
+`qrcode-test.html` is a browser-based test page covering different data types and error correction levels. Serve the repository with PHP's built-in web server and open the test page:
 
-`wq` - Width of quiet area units. Default is 1. Use 0 to suppress quiet area.
+```sh
+php -S localhost:8000
+```
 
-`wm` - Width of narrow modules and spaces. Default is 1.
+Then visit <http://localhost:8000/qrcode-test.html>.
+
+## 📜 License and credits
+
+This project is licensed under the [MIT License](LICENSE).
+
+The QR encoding implementation is based on [Kreative Software's barcode project](https://github.com/kreativekorp/barcode). Portions are Copyright (c) 2016-2018 Kreative Software. Other project portions are Copyright (c) 2019 Donald Becker.
