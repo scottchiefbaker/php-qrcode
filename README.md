@@ -133,6 +133,18 @@ options without writing code. It calls the HTTP endpoint and
 live-previews the result as you change the data, error correction
 level, scale, module density, and PNG/SVG format.
 
+## 🧪 Tests
+
+Run the standalone unit tests with PHP:
+
+```sh
+php unit_tests/tests.php
+```
+
+The SVG tests run without extensions. The PNG rendering test is skipped
+when the GD extension is unavailable. Pass `--simple` to show only failures
+and the summary.
+
 ## 📜 License and credits
 
 This project is licensed under the [MIT License](LICENSE).
