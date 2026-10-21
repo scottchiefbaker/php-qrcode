@@ -84,6 +84,8 @@ test('numeric alphanumeric binary and Kanji data render', function () {
 		'HELLO WORLD',
 		'hello, world!',
 		"\x8A\xBF\x8E\x9A", // Kanji for 漢字 in Shift-JIS
+		"\xE0\x40", // Kanji in the 0xE0-0xEA lead-byte range
+		"\xEB\xBF", // Kanji with the 0xEB lead byte
 	];
 
 	foreach ($inputs as $input) {
@@ -102,6 +104,12 @@ test('PNG rendering returns a GD image of the requested dimensions', function ()
 	assert_same(80, imagesy($image));
 }, 'gd');
 
+test('PNG rendering applies background and foreground colors', function () {
+	$image = (new QRCode('HELLO', ['sf' => 1, 'bc' => '112233', 'fc' => 'AABBCC']))->render_image();
+	assert_same(0x112233, imagecolorat($image, 0, 0), 'background color');
+	assert_same(0xAABBCC, imagecolorat($image, 4, 4), 'foreground color');
+}, 'gd');
+
 test('higher QR versions render at spec-fixed sizes', function () {
 	$cases = [
 		[str_repeat('1', 50),   33],   // version 2: alignment patterns appear
@@ -114,6 +122,19 @@ test('higher QR versions render at spec-fixed sizes', function () {
 	foreach ($cases as [$data, $size]) {
 		$svg = assert_svg(new QRCode($data, ['sf' => 1]));
 		assert_same($size, svg_size($svg), 'size for ' . strlen($data) . ' numeric characters');
+	}
+});
+
+test('alphanumeric and binary payloads span every length-field group', function () {
+	$cases = [
+		[str_repeat('A', 336),  65],  // alphanumeric version 10: length group 1
+		[str_repeat('A', 1991), 133], // alphanumeric version 27: length group 2
+		[str_repeat('a', 231),  65],  // binary version 10: 16-bit length field
+		[str_repeat('a', 1368), 133], // binary version 27: 16-bit length field
+	];
+	foreach ($cases as [$data, $size]) {
+		$svg = assert_svg(new QRCode($data, ['sf' => 1]));
+		assert_same($size, svg_size($svg), 'size for ' . strlen($data) . ' bytes');
 	}
 });
 
@@ -196,6 +217,24 @@ test('output_svg writes exactly the same document as render_svg', function () {
 test('output_image writes PNG bytes to the response', function () {
 	$output = capture_output(fn () => (new QRCode('HELLO'))->output_image());
 	assert_same("\x89PNG\r\n\x1a\n", substr($output, 0, 8), 'PNG signature');
+}, 'gd');
+
+test('HTTP endpoint renders SVG via f or format', function () {
+	$expected = (new QRCode('HELLO', ['sf' => 1]))->render_svg();
+	assert_same($expected, run_endpoint(['d' => 'HELLO', 'sf' => 1, 'f' => 'svg']));
+	assert_same($expected, run_endpoint(['d' => 'HELLO', 'sf' => 1, 'format' => ' SVG ']));
+});
+
+test('HTTP endpoint defaults to PNG for missing or unknown formats', function () {
+	$requests = [
+		['d' => 'HELLO'],
+		['d' => 'HELLO', 'f' => 'gif'],
+		['d' => 'HELLO', 'f' => ['svg']],
+	];
+	foreach ($requests as $request) {
+		$output = run_endpoint($request);
+		assert_same("\x89PNG\r\n\x1a\n", substr($output, 0, 8), 'PNG signature');
+	}
 }, 'gd');
 
 test('rendering is deterministic for identical input and options', function () {
@@ -284,6 +323,29 @@ function temp_file(string $prefix = 'test_', string $suffix = ''): string {
 	$file = sys_get_temp_dir() . '/' . $prefix . bin2hex(random_bytes(8)) . $suffix;
 	$TEMP_FILES[] = $file;
 	return $file;
+}
+
+function run_endpoint(array $request): string {
+	$entry = realpath(__DIR__ . '/../qrcode.php');
+	$script = temp_file('endpoint_', '.php');
+	$code = '<?php $_REQUEST = ' . var_export($request, true)
+		. '; $_SERVER["SCRIPT_FILENAME"] = ' . var_export($entry, true)
+		. '; require ' . var_export($entry, true) . ';';
+	file_put_contents($script, $code);
+
+	$process = proc_open([PHP_BINARY, $script], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+	if (!is_resource($process)) {
+		fail_test('could not start PHP endpoint');
+	}
+	$output = stream_get_contents($pipes[1]);
+	$error = stream_get_contents($pipes[2]);
+	fclose($pipes[1]);
+	fclose($pipes[2]);
+	$status = proc_close($process);
+	if ($status !== 0) {
+		fail_test('endpoint failed: ' . trim($error));
+	}
+	return $output;
 }
 
 function image_matrix(\GdImage $image): array {
