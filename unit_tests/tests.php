@@ -36,6 +36,94 @@ function svg_size(string $svg): int {
 	return (int)$dimensions[0];
 }
 
+function svg_path(string $svg): string {
+	if (!preg_match('/<path d="([^"]*)"/', $svg, $matches)) {
+		fail_test('could not find path data in SVG');
+	}
+	return $matches[1];
+}
+
+function svg_path_subpaths(string $path): int {
+	return substr_count($path, 'M') + substr_count($path, 'm');
+}
+
+function svg_path_rects(string $path): array {
+	preg_match_all('/[MmHhVvZz]|-?\d+(?:\.\d+)?/', $path, $matches);
+	$tokens = $matches[0];
+	$count = count($tokens);
+	$rects = [];
+	$x = $y = $start_x = $start_y = 0.0;
+	$min_x = $min_y = $max_x = $max_y = null;
+	$flush = function () use (&$rects, &$min_x, &$min_y, &$max_x, &$max_y): void {
+		if ($min_x !== null) {
+			$rects[] = [$min_x, $min_y, $max_x, $max_y];
+			$min_x = $min_y = $max_x = $max_y = null;
+		}
+	};
+
+	for ($i = 0; $i < $count;) {
+		$cmd = $tokens[$i++];
+		switch ($cmd) {
+			case 'M':
+			case 'm':
+				$flush();
+				$vx = (float)$tokens[$i++];
+				$vy = (float)$tokens[$i++];
+				if ($cmd === 'm') {
+					$x += $vx;
+					$y += $vy;
+				} else {
+					$x = $vx;
+					$y = $vy;
+				}
+				$start_x = $x;
+				$start_y = $y;
+				$min_x = $max_x = $x;
+				$min_y = $max_y = $y;
+				break;
+			case 'H':
+			case 'h':
+				$vx = (float)$tokens[$i++];
+				$x = ($cmd === 'h') ? $x + $vx : $vx;
+				$min_x = min($min_x, $x);
+				$max_x = max($max_x, $x);
+				break;
+			case 'V':
+			case 'v':
+				$vy = (float)$tokens[$i++];
+				$y = ($cmd === 'v') ? $y + $vy : $vy;
+				$min_y = min($min_y, $y);
+				$max_y = max($max_y, $y);
+				break;
+			case 'Z':
+			case 'z':
+				$x = $start_x;
+				$y = $start_y;
+				break;
+			default:
+				fail_test('unexpected SVG path command: ' . $cmd);
+		}
+	}
+	$flush();
+	return $rects;
+}
+
+function svg_path_cells(string $path): array {
+	$cells = [];
+	foreach (svg_path_rects($path) as [$min_x, $min_y, $max_x, $max_y]) {
+		for ($y = (int)$min_y; $y < (int)$max_y; $y++) {
+			for ($x = (int)$min_x; $x < (int)$max_x; $x++) {
+				$cells[$y][$x] = true;
+			}
+		}
+	}
+	ksort($cells);
+	foreach ($cells as &$row) {
+		ksort($row);
+	}
+	return $cells;
+}
+
 test('SVG rendering produces a complete SVG document', function () {
 	$svg = assert_svg(new QRCode('HELLO WORLD'));
 	assert_true(str_contains($svg, 'fill="#FFFFFF"'), 'default background color');
@@ -194,6 +282,19 @@ test('marker density option changes the rendered path', function () {
 	$full = (new QRCode('HELLO', ['sf' => 4, 'md' => 1]))->render_svg();
 	$half = (new QRCode('HELLO', ['sf' => 4, 'md' => 0.5]))->render_svg();
 	assert_true($full !== $half, 'density alters rendering');
+});
+
+test('merged SVG path preserves module coverage and reduces size', function () {
+	$merged = svg_path((new QRCode('HELLO', ['sf' => 1]))->render_svg());
+	$unmerged = svg_path((new QRCode('HELLO', ['sf' => 1, 'md' => 0.999]))->render_svg());
+
+	assert_same(
+		sha1(serialize(svg_path_cells($unmerged))),
+		sha1(serialize(svg_path_cells($merged))),
+		'merged rectangles cover the same modules'
+	);
+	assert_true(svg_path_subpaths($merged) < svg_path_subpaths($unmerged), 'merging reduces subpaths');
+	assert_true(strlen($merged) < strlen($unmerged) * 0.5, 'merging reduces path size');
 });
 
 test('color options fall back and are truncated to six digits', function () {

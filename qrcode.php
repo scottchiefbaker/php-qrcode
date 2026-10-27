@@ -91,25 +91,107 @@ class QRCode {
 		$svg = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
 		$svg .= '<svg xmlns="http://www.w3.org/2000/svg" width="' . (int)$width . '" height="' . (int)$height . '" viewBox="0 0 ' . (int)$width . ' ' . (int)$height . '" shape-rendering="crispEdges">' . "\n";
 		$svg .= '<rect width="100%" height="100%" fill="' . htmlspecialchars($bg, ENT_QUOTES) . '"/>' . "\n";
-		$d = '';
-		foreach ($code['b'] as $by => $row) {
-			$y1 = $y + $by * $wh;
-			foreach ($row as $bx => $color) {
-				if (!$color) continue;
-				$x1 = $x + $bx * $wh;
-				$rx = (int)floor($x1 + (1 - $density) * $wh / 2);
-				$ry = (int)floor($y1 + (1 - $density) * $wh / 2);
-				$rw = (int)ceil($wh * $density);
-				$rh = (int)ceil($wh * $density);
-				$d .= 'M' . $rx . ' ' . $ry . 'h' . $rw . 'v' . $rh . 'h-' . $rw . 'Z';
-			}
-		}
+		$d = $this->build_svg_path($code['b'], $x, $y, $wh, $density);
 		if ($d !== '') {
 			$svg .= '<path d="' . $d . '" fill="' . htmlspecialchars($fg, ENT_QUOTES) . '"/>' . "\n";
 		}
 		$svg .= '</svg>' . "\n";
 
 		return $svg;
+	}
+
+	private function build_svg_path(array $modules, float $x, float $y, float $wh, float $density): string {
+		if ($density === 1.0) {
+			return $this->emit_rect_path($this->build_merged_rects($modules, $x, $y, $wh));
+		}
+
+		$rects = array();
+		foreach ($modules as $by => $row) {
+			$y1 = $y + $by * $wh;
+			foreach ($row as $bx => $color) {
+				if (!$color) continue;
+				$x1 = $x + $bx * $wh;
+				$rects[] = array(
+					(int)floor($x1 + (1 - $density) * $wh / 2),
+					(int)floor($y1 + (1 - $density) * $wh / 2),
+					(int)ceil($wh * $density),
+					(int)ceil($wh * $density),
+				);
+			}
+		}
+		return $this->emit_rect_path($rects);
+	}
+
+	private function build_merged_rects(array $modules, float $x, float $y, float $wh): array {
+		$rects = array();
+		$visited = array();
+		foreach ($modules as $by => $row) {
+			foreach ($row as $bx => $color) {
+				if (!$color || isset($visited[$by][$bx])) continue;
+
+				$x2 = $bx;
+				while (!empty($modules[$by][$x2 + 1]) && !isset($visited[$by][$x2 + 1])) {
+					$x2++;
+				}
+
+				$y2 = $by;
+				while (true) {
+					$next = $y2 + 1;
+					$full = true;
+					for ($cx = $bx; $cx <= $x2; $cx++) {
+						if (empty($modules[$next][$cx]) || isset($visited[$next][$cx])) {
+							$full = false;
+							break;
+						}
+					}
+					if (!$full) break;
+					$y2 = $next;
+				}
+
+				for ($cy = $by; $cy <= $y2; $cy++) {
+					for ($cx = $bx; $cx <= $x2; $cx++) {
+						$visited[$cy][$cx] = true;
+					}
+				}
+
+				$rects[] = array(
+					(int)floor($x + $bx * $wh),
+					(int)floor($y + $by * $wh),
+					(int)ceil(($x2 - $bx + 1) * $wh),
+					(int)ceil(($y2 - $by + 1) * $wh),
+				);
+			}
+		}
+
+		return $rects;
+	}
+
+	private function emit_rect_path(array $rects): string {
+		$d = '';
+		$prev_x = 0;
+		$prev_y = 0;
+		$first = true;
+		foreach ($rects as $rect) {
+			list($rx, $ry, $rw, $rh) = $rect;
+
+			$close_relative = 'h-' . $rw;
+			$close_absolute = 'H' . $rx;
+			$close = (strlen($close_absolute) < strlen($close_relative)) ? $close_absolute : $close_relative;
+
+			if ($first) {
+				$move = 'M' . $rx . ' ' . $ry;
+			} else {
+				$absolute = 'M' . $rx . ' ' . $ry;
+				$relative = 'm' . ($rx - $prev_x) . ' ' . ($ry - $prev_y);
+				$move = (strlen($relative) <= strlen($absolute)) ? $relative : $absolute;
+			}
+
+			$d .= $move . 'h' . $rw . 'v' . $rh . $close;
+			$prev_x = $rx;
+			$prev_y = $ry + $rh;
+			$first = false;
+		}
+		return $d;
 	}
 
 	private function normalize_color(mixed $color, string $fallback): string {
