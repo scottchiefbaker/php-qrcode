@@ -145,6 +145,16 @@ The SVG tests run without extensions. The PNG rendering test is skipped
 when the GD extension is unavailable. Pass `--simple` to show only failures
 and the summary.
 
+To compare PNG and SVG rendering speed:
+
+```sh
+php unit_tests/benchmark.php
+php unit_tests/benchmark.php --iterations=200 --scale=10
+```
+
+Encoding is shared by both formats and measured separately. Without GD
+the benchmark still reports the SVG numbers and skips the PNG columns.
+
 ## 📜 License and credits
 
 This project is licensed under the [MIT License](LICENSE).
