@@ -297,6 +297,74 @@ test('merged SVG path preserves module coverage and reduces size', function () {
 	assert_true(strlen($merged) < strlen($unmerged) * 0.5, 'merging reduces path size');
 });
 
+test('emitted SVG subpaths trace well-formed rectangles', function () {
+	// Simulate the pen through each subpath: the renderer draws every
+	// rectangle as M x y (or m dx dy after the first), h w, v h and one
+	// close command that returns to the rectangle corner it left from
+	// along an edge, with the fill implicitly closing the one remaining
+	// side.
+	$data_cases = ['HELLO', 'https://example.com/some/path?q=hello&lang=en',
+		'REPEATABLE', str_repeat('A', 40)];
+	foreach ($data_cases as $data) {
+		foreach ([1, 4] as $scale) {
+			preg_match_all('/[MmHhVvZz]|-?\d+(?:\.\d+)?/', svg_path((new QRCode($data, ['s' => 'qr-m', 'sf' => $scale]))->render_svg()), $matches);
+			$tokens = $matches[0];
+			$count = count($tokens);
+			assert_true($count > 0, 'path has commands');
+
+			$i = 0;
+			$subpaths = 0;
+			$pen_x = 0.0;
+			$pen_y = 0.0;
+			while ($i < $count) {
+				$cmd = $tokens[$i++];
+				assert_true($cmd === 'M' || $cmd === 'm', 'every subpath starts with a move command');
+				$vx = (float)$tokens[$i++];
+				$vy = (float)$tokens[$i++];
+				if ($cmd === 'm') {
+					$pen_x += $vx;
+					$pen_y += $vy;
+					$start_x = $pen_x;
+					$start_y = $pen_y;
+				} else {
+					$start_x = $vx;
+					$start_y = $vy;
+				}
+				$cmd = $tokens[$i++];
+				assert_same('h', $cmd, 'rectangle top edge is drawn rightward');
+				$w = (float)$tokens[$i++];
+				$cmd = $tokens[$i++];
+				assert_same('v', $cmd, 'rectangle right edge is drawn downward');
+				$h = (float)$tokens[$i++];
+				assert_true($w > 0 && $h > 0, 'rectangle has positive extent');
+				$cmd = $tokens[$i++];
+				if ($cmd === 'h') {
+					assert_same(-$w, (float)$tokens[$i++], 'close returns along the bottom edge');
+					$pen_x = $start_x;
+					$pen_y = $start_y + $h;
+				} elseif ($cmd === 'v') {
+					assert_same(-$h, (float)$tokens[$i++], 'close returns along the right edge');
+					$pen_x = $start_x + $w;
+					$pen_y = $start_y;
+				} else {
+					assert_true($cmd === 'H' || $cmd === 'V', 'close is one of h, H, v, V');
+					if ($cmd === 'H') {
+						assert_same($start_x, (float)$tokens[$i++], 'absolute close returns to the left edge');
+						$pen_x = $start_x;
+						$pen_y = $start_y + $h;
+					} else {
+						assert_same($start_y, (float)$tokens[$i++], 'absolute close returns to the top edge');
+						$pen_x = $start_x + $w;
+						$pen_y = $start_y;
+					}
+				}
+				$subpaths++;
+			}
+			assert_true($subpaths > 0, 'path has subpaths');
+		}
+	}
+});
+
 test('color options fall back and are truncated to six digits', function () {
 	$svg = assert_svg(new QRCode('HELLO', ['bc' => '', 'fc' => ['x']]));
 	assert_true(str_contains($svg, 'fill="#FFFFFF"'), 'empty background falls back to white');
