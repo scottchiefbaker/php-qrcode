@@ -109,10 +109,15 @@ function svg_path_rects(string $path): array {
 }
 
 function svg_path_cells(string $path): array {
+	$rects = svg_path_rects($path);
 	$cells = [];
-	foreach (svg_path_rects($path) as [$min_x, $min_y, $max_x, $max_y]) {
-		for ($y = (int)$min_y; $y < (int)$max_y; $y++) {
-			for ($x = (int)$min_x; $x < (int)$max_x; $x++) {
+	// SVG path coordinates include the quiet-zone offset; shift everything
+	// so data modules start at (0, 0), matching the rendered matrix.
+	$base_x = $rects ? min(array_column($rects, 0)) : 0;
+	$base_y = $rects ? min(array_column($rects, 1)) : 0;
+	foreach ($rects as [$min_x, $min_y, $max_x, $max_y]) {
+		for ($y = (int)($min_y - $base_y); $y < (int)($max_y - $base_y); $y++) {
+			for ($x = (int)($min_x - $base_x); $x < (int)($max_x - $base_x); $x++) {
 				$cells[$y][$x] = true;
 			}
 		}
@@ -181,6 +186,27 @@ test('numeric alphanumeric binary and Kanji data render', function () {
 	}
 });
 
+test('mode detection emits the right mode indicator in the codewords', function () {
+	// The first four bits of each codeword stream are the mode indicator:
+	// 0001 numeric, 0010 alphanumeric, 0100 binary, 1000 Kanji.
+	$cases = [
+		['',                             '0001', 'empty data uses numeric mode'],
+		['1234567890',                   '0001', 'digits use numeric mode'],
+		['HELLO WORLD',                  '0010', 'uppercase text uses alphanumeric mode'],
+		["\xE0\x40",                     '1000', 'Shift-JIS pair uses Kanji mode'],
+		["\x81\x40A",                    '0100', 'Kanji plus invalid byte falls back to binary mode'],
+		["\x00",                         '0100', 'NUL byte uses binary mode'],
+		["\xE6\xBC\xE6\xBC",             '1000', 'UTF-8 bytes can sneak into Kanji mode (documented limitation)'],
+		["\xE6\xBC\xA2",                 '0100', 'odd-length UTF-8 falls back to binary mode'],
+	];
+	foreach ($cases as [$data, $mode_bits, $label]) {
+		$qrcode = new QRCode($data, ['sf' => 1]);
+		$matrix = image_matrix($qrcode->render_image());
+		$bits = unmasked_data_bits($qrcode, $matrix, symbol_mask($matrix));
+		assert_true(str_starts_with($bits, $mode_bits), $label . ' (got ' . substr($bits, 0, 4) . ')');
+	}
+}, 'gd');
+
 test('nonpositive explicit dimensions remain at least one pixel', function () {
 	$svg = assert_svg(new QRCode('HELLO', ['w' => 0, 'h' => -1]));
 	assert_true(str_contains($svg, 'width="116" height="116"'));
@@ -198,12 +224,61 @@ test('PNG rendering applies background and foreground colors', function () {
 	assert_same(0xAABBCC, imagecolorat($image, 4, 4), 'foreground color');
 }, 'gd');
 
+test('PNG module grid matches SVG module coverage', function () {
+	$options = ['sf' => 1, 's' => 'qr-m'];
+	$cells = svg_path_cells(svg_path((new QRCode('HELLO WORLD', $options))->render_svg()));
+
+	$image = (new QRCode('HELLO WORLD', $options))->render_image();
+	$png_cells = [];
+	for ($y = 4, $size = imagesy($image) - 4; $y < $size; $y++) {
+		for ($x = 4, $width = imagesx($image) - 4; $x < $width; $x++) {
+			if (imagecolorat($image, $x, $y) >> 16 < 128) {
+				$png_cells[$y - 4][$x - 4] = true;
+			}
+		}
+	}
+	assert_same(sha1(serialize($cells)), sha1(serialize($png_cells)),
+		'both renderers draw the same modules at the same coordinates');
+}, 'gd');
+
+test('PNG scales in whole pixels and centers the symbol in the request', function () {
+	// HELLO is version 1: 29 module units. In a 120x80 box the natural
+	// fit ratio 120/29 floors to 2, so the 58x58 symbol is centered at
+	// (31, 11) and the four-module quiet zone starts at (39, 19).
+	$fg = 0x000000;
+	$bg = 0xFFFFFF;
+	$image = (new QRCode('HELLO', ['w' => 120, 'h' => 80]))->render_image();
+	assert_same(120, imagesx($image));
+	assert_same(80, imagesy($image));
+	assert_same($fg, imagecolorat($image, 39, 19), 'first module sits at the computed offset');
+	assert_same($fg, imagecolorat($image, 40, 20), 'modules draw a full 2px wide');
+	assert_same($bg, imagecolorat($image, 38, 19), 'no antialiasing at module edges');
+	assert_same($bg, imagecolorat($image, 53, 19), 'separator column stays light after the finder row');
+	assert_same($bg, imagecolorat($image, 5, 5), 'centering leaves unmarked background margins');
+	assert_same($bg, imagecolorat($image, 115, 75), 'the wide aspect leaves extra margin on the right');
+}, 'gd');
+
+test('PNG marker density insets dark modules like the SVG renderer', function () {
+	// Default 4px modules at 50% density draw as a 2x2 block inset by
+	// one pixel from the top-left corner of each module cell.
+	$fg = 0x000000;
+	$bg = 0xFFFFFF;
+	$image = (new QRCode('HELLO', ['md' => 0.5]))->render_image();
+	assert_same(116, imagesx($image));
+	assert_same(116, imagesy($image));
+	assert_same($fg, imagecolorat($image, 17, 17), 'inset dark block covers the center');
+	assert_same($fg, imagecolorat($image, 18, 18), 'inset dark block is 2px');
+	assert_same($bg, imagecolorat($image, 16, 16), 'cell origin is left empty at reduced density');
+	assert_same($bg, imagecolorat($image, 19, 19), 'cell tail is left empty at reduced density');
+}, 'gd');
+
 test('higher QR versions render at spec-fixed sizes', function () {
 	$cases = [
 		[str_repeat('1', 50),   33],   // version 2: alignment patterns appear
 		[str_repeat('1', 100),  37],   // version 3
 		[str_repeat('1', 350),  53],   // version 7: version info appears
 		[str_repeat('1', 600),  65],   // version 10: version group 1
+		[str_repeat('1', 2000), 105],  // version 20
 		[str_repeat('1', 4500), 153],  // version 32: version group 2
 		[str_repeat('1', 7000), 185],  // version 40: maximum
 	];
@@ -211,6 +286,164 @@ test('higher QR versions render at spec-fixed sizes', function () {
 		$svg = assert_svg(new QRCode($data, ['sf' => 1]));
 		assert_same($size, svg_size($svg), 'size for ' . strlen($data) . ' numeric characters');
 	}
+});
+
+test('version information blocks carry valid BCH checksums', function () {
+	// The 18-bit version information must decode to the version number and
+	// satisfy the BCH(18,6) checksum (generator 0x1F25) in both placements.
+	$bch = function (array $matrix): int {
+		$size = count($matrix);
+		$bits_bottom = '';
+		$bits_top = '';
+		for ($i = 0; $i < 18; $i++) {
+			// Bottom-left block: rows size-11..size-9, columns 5..0.
+			// Top-right block is the mirrored transpose.
+			$r = $size - 9 - ($i % 3);
+			$c = 5 - intdiv($i, 3);
+			$bits_bottom .= $matrix[$r][$c];
+			$bits_top .= $matrix[$c][$r];
+		}
+		assert_same($bits_bottom, $bits_top, 'both placements hold identical bits');
+		return bindec($bits_bottom);
+	};
+
+	$cases = [
+		[str_repeat('1', 350),  7],   // first version with version info
+		[str_repeat('1', 600),  10],
+		[str_repeat('1', 2000), 20],
+		[str_repeat('1', 4500), 32],  // second length-field group
+		[str_repeat('1', 7000), 40],  // maximum
+	];
+	foreach ($cases as [$data, $version]) {
+		$matrix = image_matrix((new QRCode($data, ['sf' => 1]))->render_image());
+		assert_same(17 + 4 * $version, count($matrix), "symbol is version $version");
+
+		$value = $bch($matrix);
+		$decoded = $value >> 12;
+		assert_same($version, $decoded, 'data bits decode to the version number');
+		assert_same(($decoded << 12) | bch12($decoded), $value, "BCH checksum for version $version");
+	}
+}, 'gd');
+
+test('fixed structural modules are placed per spec across versions', function () {
+	// Independent re-derivation of the finder, separator, timing, alignment
+	// and dark-module templates straight from the QR specification.
+	$finder_bit = static fn (int $dy, int $dx): int =>
+		(($dy === 0 || $dy === 6 || $dx === 0 || $dx === 6)
+			|| !($dy === 1 || $dy === 5 || $dx === 1 || $dx === 5)) ? 1 : 0;
+	$alignment_bit = static fn (int $dy, int $dx): int =>
+		((max(abs($dy), abs($dx)) & 1) === 0) ? 1 : 0;
+
+	$cases = [
+		['HELLO WORLD',        21, []],        // version 1
+		[str_repeat('1', 50),  25, [[18, 18]]], // version 2 alignment center
+		[str_repeat('1', 350), 45, [[6, 22], [22, 6], [22, 22]]], // version 7
+	];
+	foreach ($cases as [$data, $size, $centers]) {
+		$matrix = image_matrix((new QRCode($data, ['sf' => 1]))->render_image());
+		assert_same($size, count($matrix), 'symbol size');
+		$last = $size - 1;
+
+		// The mandatory dark module at row size-8, column 8.
+		assert_true($matrix[$size - 8][8] === 1, "size $size: dark module is dark");
+
+		// Timing patterns alternate along row and column 6, between the
+		// finder areas only.
+		for ($i = 8; $i <= $size - 9; $i++) {
+			assert_same(($i % 2 === 0) ? 1 : 0, $matrix[6][$i], "size $size: timing row at column $i");
+			assert_same(($i % 2 === 0) ? 1 : 0, $matrix[$i][6], "size $size: timing column at row $i");
+		}
+
+		// Finder patterns sit in three corners with light separators.
+		foreach ([[0, 0], [0, $size - 7], [$size - 7, 0]] as [$r0, $c0]) {
+			for ($dy = 0; $dy <= 6; $dy++) {
+				for ($dx = 0; $dx <= 6; $dx++) {
+					assert_same($finder_bit($dy, $dx), $matrix[$r0 + $dy][$c0 + $dx],
+						"size $size: finder template at $r0,$c0 offset $dy,$dx");
+				}
+			}
+		}
+		// Shifted copies of the top-left separator for the other corners.
+		for ($i = 0; $i <= 7; $i++) {
+			assert_true($matrix[7][$i] === 0, "size $size: separator row 7, column $i");
+			assert_true($matrix[$i][7] === 0, "size $size: separator column 7, row $i");
+			assert_true($matrix[7][$last - $i] === 0, "size $size: separator row 7, column -$i");
+			assert_true($matrix[$i][$last - 7] === 0, "size $size: separator column size-8, row $i");
+			assert_true($matrix[$last - 7][$i] === 0, "size $size: separator row size-8, column $i");
+			assert_true($matrix[$last - $i][7] === 0, "size $size: separator column 7, row -$i");
+		}
+
+		// Alignment patterns (skipped where they overlap finders).
+		foreach ($centers as [$r, $c]) {
+			for ($dy = -2; $dy <= 2; $dy++) {
+				for ($dx = -2; $dx <= 2; $dx++) {
+					assert_same($alignment_bit($dy, $dx), $matrix[$r + $dy][$c + $dx],
+						"size $size: alignment template at $r,$c offset $dy,$dx");
+				}
+			}
+		}
+	}
+}, 'gd');
+
+test('mask penalty rules score runs, blocks, patterns and density per spec', function () {
+	// The penalty functions classify a module as dark when its raw matrix
+	// value is 3 or 5, so hand-built matrices use 3 for dark and 0 for
+	// light. Expected scores are derived straight from the specification.
+	$qrcode = new QRCode('');
+	$score = function (string $method, array $matrix) use ($qrcode): int {
+		$reflection = new \ReflectionMethod(QRCode::class, $method);
+		$closure = $reflection->getClosure($qrcode);
+		return $closure($matrix, count($matrix));
+	};
+	$grid = function (array $rows): array {
+		$matrix = [];
+		foreach ($rows as $row) {
+			$matrix[] = array_map(static fn (string $c): int => $c === '1' ? 3 : 0, str_split($row));
+		}
+		return $matrix;
+	};
+	$checker = static function (int $size): array {
+		$matrix = [];
+		for ($i = 0; $i < $size; $i++) {
+			$row = [];
+			for ($j = 0; $j < $size; $j++) $row[] = (($i + $j) % 2) ? 0 : 3;
+			$matrix[] = $row;
+		}
+		return $matrix;
+	};
+
+	// Rule 1: every run of one colour of length N >= 5 scores N - 2.
+	$all_dark = $grid(array_fill(0, 5, '11111'));
+	$all_light = $grid(array_fill(0, 5, '00000'));
+	assert_same(30, $score('qr_penalty_1', $all_dark), 'rule 1: 5x5 single colour dark (10 runs of 5)');
+	assert_same(30, $score('qr_penalty_1', $all_light), 'rule 1: light runs score the same as dark runs');
+	$single_run = $grid([
+		'0000000', '0000000', '0000000', '1111100',
+		'0000000', '0000000', '0000000',
+	]);
+	assert_same(43, $score('qr_penalty_1', $single_run),
+		'rule 1: six full light rows (+5 each), the 5-run (+3), two full light columns (+5 each)');
+
+	// Rule 2: every same-colour 2x2 block scores 3.
+	assert_same(48, $score('qr_penalty_2', $all_dark), 'rule 2: 5x5 has 16 uniform blocks');
+	assert_same(0, $score('qr_penalty_2', $checker(4)), 'rule 2: checkerboard never matches');
+
+	// Rule 3: the 10111010000 / 00001011101 patterns score 40 each.
+	$pattern_row = fn (string $row): array => array_map(static fn (string $c): int => $c === '1' ? 3 : 0, str_split($row));
+	$pattern = $grid(array_fill(0, 11, '00000000000'));
+	$pattern[5] = $pattern_row('10111010000');
+	assert_same(40, $score('qr_penalty_3', $pattern), 'rule 3: 10111010000 row');
+	$pattern[5] = $pattern_row('00001011101');
+	assert_same(40, $score('qr_penalty_3', $pattern), 'rule 3: mirrored 00001011101 row');
+	$pattern[5] = $pattern_row('01011010000');
+	assert_same(0, $score('qr_penalty_3', $pattern), 'rule 3: an off-pattern row scores nothing');
+
+	// Rule 4: dark-module ratio scored in 1% steps around 50%.
+	$half = $checker(20); // one colour in half the cells: exactly 50%
+	assert_same(0, $score('qr_penalty_4', $half), 'rule 4: 50% ratio scores zero');
+	$full = $grid(array_fill(0, 20, str_repeat('1', 20)));
+	assert_same(100, $score('qr_penalty_4', $full), 'rule 4: 100% dark ratio scores 10 steps');
+	assert_same(100, $score('qr_penalty_4', $all_light), 'rule 4: 0% ratio mirrors the fully dark one');
 });
 
 test('alphanumeric and binary payloads span every length-field group', function () {
@@ -242,6 +475,16 @@ test('all four error correction levels produce distinct output', function () {
 test('payloads larger than version 40 are truncated, not rejected', function () {
 	$svg = assert_svg(new QRCode(str_repeat('1', 7200), ['sf' => 1]));
 	assert_same(185, svg_size($svg), 'oversized payload clamps to version 40');
+});
+
+test('oversized Kanji payloads truncate on character boundaries', function () {
+	$reflection = new \ReflectionClass(QRCode::class);
+	$capacity = $reflection->getProperty('qr_capacity')->getValue(new QRCode(''));
+	$max_chars = $capacity[39][0][3]; // version 40, level L, Kanji
+	$payload = str_repeat("\x81\x40", $max_chars + 1);
+	$svg = assert_svg(new QRCode($payload, ['sf' => 1]));
+	assert_same(185, svg_size($svg), 'truncates to version 40 capacity');
+	assert_true(count(svg_path_cells(svg_path($svg))) > 0, 'remaining data still encodes modules');
 });
 
 test('per-side padding options each contribute to one dimension', function () {
@@ -276,6 +519,16 @@ test('invalid numeric options silently fall back to defaults', function () {
 	foreach ($fallbacks as $index => $options) {
 		assert_same($default, (new QRCode('HELLO', $options))->render_svg(), 'fallback case ' . $index);
 	}
+});
+
+test('non-string data is rejected by the constructor', function () {
+	$thrown = false;
+	try {
+		new QRCode(['x']);
+	} catch (\TypeError) {
+		$thrown = true;
+	}
+	assert_true($thrown, 'array data raises TypeError');
 });
 
 test('marker density option changes the rendered path', function () {
@@ -406,18 +659,103 @@ test('HTTP endpoint defaults to PNG for missing or unknown formats', function ()
 	}
 }, 'gd');
 
+test('HTTP endpoint parses string-typed layout options like the class', function () {
+	// Over HTTP every parameter arrives as a string; the endpoint and the
+	// class API must produce the same symbol for the same options.
+	$options = [
+		'sf' => '1', 'bc' => 'abc', 'fc' => '12-34-56', 'md' => '0.5',
+		'wq' => '2', 'wm' => '2', 'sx' => '2', 'sy' => '1',
+		'pv' => '3', 'pl' => '1',
+	];
+	$expected = (new QRCode('HELLO', $options))->render_svg();
+	assert_same($expected, run_endpoint($options + ['d' => 'HELLO', 'f' => 'svg']));
+});
+
+test('chosen mask patterns are a pinned regression sentinel', function () {
+	// Mask selection follows from the penalty rules, which the previous
+	// test validates against the spec; these pins (recorded from a verified
+	// state) lock in the end-to-end result so a penalty or scoring
+	// regression fails here even though the oracle comparison above would
+	// still pass, since it reuses the symbol's own mask.
+	$cases = [
+		['HELLO WORLD', 'qr-l', 2],
+		['HELLO WORLD', 'qr-m', 0],
+		['HELLO WORLD', 'qr-q', 6],
+		['HELLO WORLD', 'qr-h', 5],
+		['https://example.com/some/path?q=hello&lang=en', 'qr-m', 4],
+		['1234567890123456789012345678901234567890', 'qr-l', 4],
+		['A' . str_repeat('B', 60), 'qr-q', 5],
+	];
+	foreach ($cases as [$data, $level, $expected_mask]) {
+		$matrix = image_matrix((new QRCode($data, ['s' => $level, 'sf' => 1]))->render_image());
+		assert_same($expected_mask, symbol_mask($matrix), 'mask for ' . strlen($data) . ' bytes at ' . $level);
+	}
+}, 'gd');
+
 test('rendering is deterministic for identical input and options', function () {
 	$first = (new QRCode('REPEATABLE', ['sf' => 3, 'bc' => '#abc']))->render_svg();
 	$second = (new QRCode('REPEATABLE', ['sf' => 3, 'bc' => '#abc']))->render_svg();
 	assert_same($first, $second);
 });
 
-test('encoder output matches qrencode across versions and levels', function () {
+/**
+ * Cross-check one payload against the qrencode binary: both symbols must
+ * have the same size and the same unmasked data codeword bits. Skips the
+ * whole test when the binary is unavailable.
+ */
+function compare_with_qrencode(string $data, string $level, string $flags = ''): void {
 	$qrencode = find_executable('qrencode');
 	if ($qrencode === null) {
 		skip_test('qrencode binary not found');
 	}
 
+	$qrcode = new QRCode($data, ['s' => 'qr-' . strtolower($level), 'sf' => 1]);
+	$ours = image_matrix($qrcode->render_image());
+
+	$reference_png = temp_file('qrencode_', '.png');
+	// qrencode mangles non-ASCII bytes passed as a CLI argument; hand it
+	// a raw file instead so byte payloads run through unmodified.
+	if (strspn($data, ' -~') === strlen($data)) {
+		$input = escapeshellarg($data);
+	} else {
+		$input_file = temp_file('qrencode_', '.bin');
+		file_put_contents($input_file, $data);
+		$input = '-r ' . escapeshellarg($input_file);
+	}
+	$command = $qrencode . ' ' . $flags
+		. ' -s 1 -m 4 -l ' . escapeshellarg($level)
+		. ' -o ' . escapeshellarg($reference_png)
+		. ' ' . $input;
+	exec($command, $ignored, $status);
+	assert_same(0, $status, 'qrencode exit status');
+
+	$reference = image_matrix(imagecreatefrompng($reference_png));
+	$label = strlen($data) . ' bytes at level ' . $level;
+
+	assert_same(count($reference), count($ours), $label . ': symbol size');
+	assert_same(
+		unmasked_data_bits($qrcode, $ours, symbol_mask($ours)),
+		unmasked_data_bits($qrcode, $reference, symbol_mask($reference)),
+		$label . ': unmasked codewords'
+	);
+}
+
+/**
+ * BCH(18,6) remainder for a 6-bit version number, using the generator
+ * 0x1F25 from the QR specification. Used to independently validate the
+ * rendered version information bits.
+ */
+function bch12(int $data): int {
+	$value = $data << 12;
+	for ($i = 17; $i >= 12; $i--) {
+		if ($value & (1 << $i)) {
+			$value ^= 0x1F25 << ($i - 12);
+		}
+	}
+	return $value & 0xFFF;
+}
+
+test('encoder output matches qrencode across versions and levels', function () {
 	$cases = [
 		['HELLO WORLD', 'L'],
 		['1234567890', 'L'],
@@ -431,26 +769,34 @@ test('encoder output matches qrencode across versions and levels', function () {
 	];
 
 	foreach ($cases as [$data, $level]) {
-		$qrcode = new QRCode($data, ['s' => 'qr-' . strtolower($level), 'sf' => 1]);
-		$ours = image_matrix($qrcode->render_image());
+		compare_with_qrencode($data, $level);
+	}
+}, 'gd');
 
-		$reference_png = temp_file('qrencode_', '.png');
-		$command = $qrencode
-			. ' -s 1 -m 4 -l ' . escapeshellarg($level)
-			. ' -o ' . escapeshellarg($reference_png)
-			. ' ' . escapeshellarg($data);
-		exec($command, $ignored, $status);
-		assert_same(0, $status, 'qrencode exit status');
+test('oracle grid: every mode at multi-block versions and levels matches qrencode', function () {
+	$reflection = new \ReflectionClass(QRCode::class);
+	$capacity = $reflection->getProperty('qr_capacity')->getValue(new QRCode(''));
+	$payload = [
+		0 => fn (int $cap): string => str_repeat('1', $cap - 1),
+		1 => fn (int $cap): string => str_repeat('A', $cap - 1),
+		2 => fn (int $cap): string => str_repeat("\x01", $cap - 1),
+		3 => fn (int $cap): string => str_repeat("\x81\x40", $cap),
+	];
+	$levels = ['L', 'H'];
 
-		$reference = image_matrix(imagecreatefrompng($reference_png));
-		$label = strlen($data) . ' bytes at level ' . $level;
-
-		assert_same(count($reference), count($ours), $label . ': symbol size');
-		assert_same(
-			unmasked_data_bits($qrcode, $ours, symbol_mask($ours)),
-			unmasked_data_bits($qrcode, $reference, symbol_mask($reference)),
-			$label . ': unmasked codewords'
-		);
+	// Near-capacity payloads force single- and multi-block EC interleave:
+	// version 1 uses one block per level, version 5 already splits into
+	// two data blocks in some levels, and versions >= 20 use both block
+	// groups with differing sizes.
+	foreach ([1, 5, 10, 20, 40] as $version) {
+		foreach ($levels as $level) {
+			$ecl = [ 'L' => 0, 'H' => 3 ][$level];
+			foreach ([0, 1, 2, 3] as $mode) {
+				$data = $payload[$mode]($capacity[$version - 1][$ecl][$mode]);
+				// qrencode only enters Kanji mode with an explicit -k flag.
+				compare_with_qrencode($data, $level, $mode === 3 ? '-k' : '');
+			}
+		}
 	}
 }, 'gd');
 
@@ -605,13 +951,6 @@ function assert_true($actual, string $msg = ''): void {
 	assert_same(true, $actual, $msg);
 }
 
-function assert_contains($needle, array $haystack, string $msg = ''): void {
-	if (!in_array($needle, $haystack, true)) {
-		$label = $msg !== '' ? "$msg: " : '';
-		fail_test($label . 'expected array to contain ' . export($needle));
-	}
-}
-
 function test(string $name, callable $fn, ?string $ext = null): void {
 	global $TESTS;
 	$TESTS[] = ['name' => $name, 'fn' => $fn, 'ext' => $ext];
@@ -677,10 +1016,8 @@ foreach ($TESTS as $registered_test) {
 }
 
 foreach ($TEMP_FILES as $file) {
-	foreach (['', '-journal', '-wal', '-shm'] as $suffix) {
-		if (file_exists($file . $suffix)) {
-			@unlink($file . $suffix);
-		}
+	if (file_exists($file)) {
+		@unlink($file);
 	}
 }
 
