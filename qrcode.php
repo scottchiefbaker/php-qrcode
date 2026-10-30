@@ -168,30 +168,114 @@ class QRCode {
 
 	private function emit_rect_path(array $rects): string {
 		$d = '';
-		$prev_x = 0;
-		$prev_y = 0;
-		$first = true;
-		foreach ($rects as $rect) {
-			list($rx, $ry, $rw, $rh) = $rect;
+		$total = count($rects);
+		$pen_x = 0;
+		$pen_y = 0;
 
-			$close_relative = 'h-' . $rw;
-			$close_absolute = 'H' . $rx;
-			$close = (strlen($close_absolute) < strlen($close_relative)) ? $close_absolute : $close_relative;
+		// Each rectangle is drawn as M x y h w v h followed by a close that
+		// returns along the bottom edge (resting at the bottom-left corner)
+		// or along the right edge (resting at the top-right corner); the
+		// fill then implicitly closes the one remaining side, whichever it
+		// is. Every close variant also changes where the pen rests, and the
+		// next rectangle's move is cheaper relative to some rest points than
+		// others, so each close is scored together with the move that
+		// follows it and the shortest encoding wins. Candidates are scored
+		// by encoded length without building strings; only the winning close
+		// and move are actually composed. Both h/H closes share one rest
+		// point and both v/V closes share the other, so the following moves
+		// are scored once per rest point.
+		for ($i = 0; $i < $total; $i++) {
+			list($rx, $ry, $rw, $rh) = $rects[$i];
 
-			if ($first) {
-				$move = 'M' . $rx . ' ' . $ry;
+			$length_bottom = 1 + $this->svg_coord_length(-$rw, true);
+			$length_left = 1 + $this->svg_coord_length($rx, true);
+			$length_top = 1 + $this->svg_coord_length(-$rh, true);
+			$length_right = 1 + $this->svg_coord_length($ry, true);
+
+			if ($i + 1 < $total) {
+				list($nrx, $nry) = $rects[$i + 1];
+				$absolute_length = 1 + $this->svg_coord_length($nrx, true) + $this->svg_coord_length($nry);
+				$relative_bottom = 1 + $this->svg_coord_length($nrx - $rx, true) + $this->svg_coord_length($nry - $ry - $rh);
+				$relative_right = 1 + $this->svg_coord_length($nrx - $rx - $rw, true) + $this->svg_coord_length($nry - $ry);
+				$follow_bottom = ($relative_bottom <= $absolute_length) ? $relative_bottom : $absolute_length;
+				$follow_right = ($relative_right <= $absolute_length) ? $relative_right : $absolute_length;
 			} else {
-				$absolute = 'M' . $rx . ' ' . $ry;
-				$relative = 'm' . ($rx - $prev_x) . ' ' . ($ry - $prev_y);
-				$move = (strlen($relative) <= strlen($absolute)) ? $relative : $absolute;
+				$follow_bottom = 0;
+				$follow_right = 0;
 			}
 
-			$d .= $move . 'h' . $rw . 'v' . $rh . $close;
-			$prev_x = $rx;
-			$prev_y = $ry + $rh;
-			$first = false;
+			$best_length = $length_bottom + $follow_bottom;
+			$best_command = 'h';
+			$best_value = -$rw;
+			$rest_x = $rx;
+			$rest_y = $ry + $rh;
+			if (($candidate_length = $length_left + $follow_bottom) < $best_length) {
+				$best_length = $candidate_length;
+				$best_command = 'H';
+				$best_value = $rx;
+			}
+			if (($candidate_length = $length_top + $follow_right) < $best_length) {
+				$best_length = $candidate_length;
+				$best_command = 'v';
+				$best_value = -$rh;
+				$rest_x = $rx + $rw;
+				$rest_y = $ry;
+			}
+			if (($candidate_length = $length_right + $follow_right) < $best_length) {
+				$best_length = $candidate_length;
+				$best_command = 'V';
+				$best_value = $ry;
+				$rest_x = $rx + $rw;
+				$rest_y = $ry;
+			}
+
+			if ($i === 0) {
+				$d .= 'M' . $this->svg_coord($rx, true) . $this->svg_coord($ry);
+			} else {
+				$relative = 'm' . $this->svg_coord($rx - $pen_x, true) . $this->svg_coord($ry - $pen_y);
+				$absolute = 'M' . $this->svg_coord($rx, true) . $this->svg_coord($ry);
+				$d .= (strlen($relative) <= strlen($absolute)) ? $relative : $absolute;
+			}
+
+			$d .= 'h' . $this->svg_coord($rw, true) . 'v' . $this->svg_coord($rh, true)
+				. $best_command . $this->svg_coord($best_value, true);
+
+			$pen_x = $rest_x;
+			$pen_y = $rest_y;
 		}
+
 		return $d;
+	}
+
+	/**
+	 * Encode a signed integer coordinate, using a minus sign as the value
+	 * separator where the SVG path grammar permits it (e.g. "m3-4" instead
+	 * of "m3 -4"); a space is only needed between non-negative values.
+	 */
+	private function svg_coord(int $value, bool $leading = false): string {
+		if ($value < 0) {
+			return '-' . (string)(-$value);
+		}
+		if ($leading) {
+			return (string)$value;
+		}
+		return ' ' . $value;
+	}
+
+	/**
+	 * Encoded length of svg_coord() for the same value, for scoring path
+	 * candidates numerically before materialising the winning one.
+	 */
+	private function svg_coord_length(int $value, bool $leading = false): int {
+		$magnitude = ($value < 0) ? -$value : $value;
+		$digits = ($magnitude < 10) ? 1 : (($magnitude < 100) ? 2 : (($magnitude < 1000) ? 3 : (($magnitude < 10000) ? 4 : (($magnitude < 100000) ? 5 : strlen((string)$magnitude)))));
+		// The minus sign is always part of the encoding, and doubles as the
+		// value separator; a non-negative value only needs the explicit
+		// space when it is not the first of a coordinate pair.
+		if ($value < 0) {
+			return $digits + 1;
+		}
+		return $digits + ($leading ? 0 : 1);
 	}
 
 	private function normalize_color(mixed $color, string $fallback): string {
