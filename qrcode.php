@@ -172,61 +172,19 @@ class QRCode {
 		$pen_x = 0;
 		$pen_y = 0;
 
-		// Each rectangle is drawn as M x y h w v h followed by a close that
-		// returns along the bottom edge (resting at the bottom-left corner)
-		// or along the right edge (resting at the top-right corner); the
-		// fill then implicitly closes the one remaining side, whichever it
-		// is. Every close variant also changes where the pen rests, and the
-		// next rectangle's move is cheaper relative to some rest points than
-		// others, so each close is scored together with the move that
-		// follows it and the shortest encoding wins. Candidates are scored
-		// by encoded length without building strings; only the winning close
-		// and move are actually composed. Both h/H closes share one rest
-		// point and both v/V closes share the other, so the following moves
-		// are scored once per rest point.
+		// Draw three sides of each rectangle, then let SVG fill implicitly
+		// close the left side. Both horizontal bottom-edge commands leave
+		// the pen at the bottom-left corner, so choose the shorter encoding.
 		for ($i = 0; $i < $total; $i++) {
 			list($rx, $ry, $rw, $rh) = $rects[$i];
 
 			$length_bottom = 1 + $this->svg_coord_length(-$rw, true);
 			$length_left = 1 + $this->svg_coord_length($rx, true);
-			$length_top = 1 + $this->svg_coord_length(-$rh, true);
-			$length_right = 1 + $this->svg_coord_length($ry, true);
-
-			if ($i + 1 < $total) {
-				list($nrx, $nry) = $rects[$i + 1];
-				$absolute_length = 1 + $this->svg_coord_length($nrx, true) + $this->svg_coord_length($nry);
-				$relative_bottom = 1 + $this->svg_coord_length($nrx - $rx, true) + $this->svg_coord_length($nry - $ry - $rh);
-				$relative_right = 1 + $this->svg_coord_length($nrx - $rx - $rw, true) + $this->svg_coord_length($nry - $ry);
-				$follow_bottom = ($relative_bottom <= $absolute_length) ? $relative_bottom : $absolute_length;
-				$follow_right = ($relative_right <= $absolute_length) ? $relative_right : $absolute_length;
-			} else {
-				$follow_bottom = 0;
-				$follow_right = 0;
-			}
-
-			$best_length = $length_bottom + $follow_bottom;
 			$best_command = 'h';
 			$best_value = -$rw;
-			$rest_x = $rx;
-			$rest_y = $ry + $rh;
-			if (($candidate_length = $length_left + $follow_bottom) < $best_length) {
-				$best_length = $candidate_length;
+			if ($length_left < $length_bottom) {
 				$best_command = 'H';
 				$best_value = $rx;
-			}
-			if (($candidate_length = $length_top + $follow_right) < $best_length) {
-				$best_length = $candidate_length;
-				$best_command = 'v';
-				$best_value = -$rh;
-				$rest_x = $rx + $rw;
-				$rest_y = $ry;
-			}
-			if (($candidate_length = $length_right + $follow_right) < $best_length) {
-				$best_length = $candidate_length;
-				$best_command = 'V';
-				$best_value = $ry;
-				$rest_x = $rx + $rw;
-				$rest_y = $ry;
 			}
 
 			if ($i === 0) {
@@ -240,8 +198,8 @@ class QRCode {
 			$d .= 'h' . $this->svg_coord($rw, true) . 'v' . $this->svg_coord($rh, true)
 				. $best_command . $this->svg_coord($best_value, true);
 
-			$pen_x = $rest_x;
-			$pen_y = $rest_y;
+			$pen_x = $rx;
+			$pen_y = $ry + $rh;
 		}
 
 		return $d;
