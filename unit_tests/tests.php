@@ -53,11 +53,16 @@ function svg_path_rects(string $path): array {
 	$count = count($tokens);
 	$rects = [];
 	$x = $y = $start_x = $start_y = 0.0;
+	$twice_area = 0.0;
 	$min_x = $min_y = $max_x = $max_y = null;
-	$flush = function () use (&$rects, &$min_x, &$min_y, &$max_x, &$max_y): void {
+	$flush = function () use (&$rects, &$min_x, &$min_y, &$max_x, &$max_y, &$twice_area, &$x, &$y, &$start_x, &$start_y): void {
 		if ($min_x !== null) {
+			$area = abs($twice_area + $x * $start_y - $start_x * $y);
+			assert_same(2.0 * ($max_x - $min_x) * ($max_y - $min_y), $area,
+				'subpath fills its bounding rectangle');
 			$rects[] = [$min_x, $min_y, $max_x, $max_y];
 			$min_x = $min_y = $max_x = $max_y = null;
+			$twice_area = 0.0;
 		}
 	};
 
@@ -84,19 +89,24 @@ function svg_path_rects(string $path): array {
 			case 'H':
 			case 'h':
 				$vx = (float)$tokens[$i++];
-				$x = ($cmd === 'h') ? $x + $vx : $vx;
+				$next_x = ($cmd === 'h') ? $x + $vx : $vx;
+				$twice_area += $x * $y - $next_x * $y;
+				$x = $next_x;
 				$min_x = min($min_x, $x);
 				$max_x = max($max_x, $x);
 				break;
 			case 'V':
 			case 'v':
 				$vy = (float)$tokens[$i++];
-				$y = ($cmd === 'v') ? $y + $vy : $vy;
+				$next_y = ($cmd === 'v') ? $y + $vy : $vy;
+				$twice_area += $x * $next_y - $x * $y;
+				$y = $next_y;
 				$min_y = min($min_y, $y);
 				$max_y = max($max_y, $y);
 				break;
 			case 'Z':
 			case 'z':
+				$twice_area += $x * $start_y - $start_x * $y;
 				$x = $start_x;
 				$y = $start_y;
 				break;
@@ -550,17 +560,33 @@ test('merged SVG path preserves module coverage and reduces size', function () {
 	assert_true(strlen($merged) < strlen($unmerged) * 0.5, 'merging reduces path size');
 });
 
+test('SVG coverage rejects subpaths that retrace an edge', function () {
+	foreach (['M4 4h7v7v-7', 'M4 4h7v7V4'] as $path) {
+		$thrown = false;
+		try {
+			svg_path_rects($path);
+		} catch (AssertionFailed $e) {
+			$thrown = true;
+		}
+		assert_true($thrown, 'retraced path has no filled area');
+	}
+	assert_same([[4.0, 4.0, 11.0, 11.0]], svg_path_rects('M4 4h7v7h-7'));
+	assert_same([[4.0, 4.0, 11.0, 11.0], [13.0, 5.0, 15.0, 8.0]],
+		svg_path_rects('M4 4h7v7H4m9-6h2v3h-2z'));
+});
+
 test('emitted SVG subpaths trace well-formed rectangles', function () {
 	// Simulate the pen through each subpath: the renderer draws every
 	// rectangle as M x y (or m dx dy after the first), h w, v h and one
-	// close command that returns to the rectangle corner it left from
-	// along an edge, with the fill implicitly closing the one remaining
-	// side.
+	// horizontal command along the bottom edge; the fill implicitly closes
+	// the remaining left side.
 	$data_cases = ['HELLO', 'https://example.com/some/path?q=hello&lang=en',
 		'REPEATABLE', str_repeat('A', 40)];
 	foreach ($data_cases as $data) {
-		foreach ([1, 4] as $scale) {
-			preg_match_all('/[MmHhVvZz]|-?\d+(?:\.\d+)?/', svg_path((new QRCode($data, ['s' => 'qr-m', 'sf' => $scale]))->render_svg()), $matches);
+		foreach ([[1, 1], [4, 1], [1, 0.5], [4, 0.5]] as [$scale, $density]) {
+			$path = svg_path((new QRCode($data, ['s' => 'qr-m', 'sf' => $scale, 'md' => $density]))->render_svg());
+			svg_path_rects($path);
+			preg_match_all('/[MmHhVvZz]|-?\d+(?:\.\d+)?/', $path, $matches);
 			$tokens = $matches[0];
 			$count = count($tokens);
 			assert_true($count > 0, 'path has commands');
@@ -595,21 +621,11 @@ test('emitted SVG subpaths trace well-formed rectangles', function () {
 					assert_same(-$w, (float)$tokens[$i++], 'close returns along the bottom edge');
 					$pen_x = $start_x;
 					$pen_y = $start_y + $h;
-				} elseif ($cmd === 'v') {
-					assert_same(-$h, (float)$tokens[$i++], 'close returns along the right edge');
-					$pen_x = $start_x + $w;
-					$pen_y = $start_y;
 				} else {
-					assert_true($cmd === 'H' || $cmd === 'V', 'close is one of h, H, v, V');
-					if ($cmd === 'H') {
-						assert_same($start_x, (float)$tokens[$i++], 'absolute close returns to the left edge');
-						$pen_x = $start_x;
-						$pen_y = $start_y + $h;
-					} else {
-						assert_same($start_y, (float)$tokens[$i++], 'absolute close returns to the top edge');
-						$pen_x = $start_x + $w;
-						$pen_y = $start_y;
-					}
+					assert_same('H', $cmd, 'close draws along the bottom edge');
+					assert_same($start_x, (float)$tokens[$i++], 'absolute close returns to the left edge');
+					$pen_x = $start_x;
+					$pen_y = $start_y + $h;
 				}
 				$subpaths++;
 			}
