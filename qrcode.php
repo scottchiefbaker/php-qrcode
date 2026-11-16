@@ -67,6 +67,14 @@ if (realpath(__FILE__) === realpath($_SERVER['SCRIPT_FILENAME'] ?? '')) {
 }
 
 class QRCode {
+	/* Hard caps on request-controlled geometry. Without these, a single HTTP
+	 * request could force a multi-gigabyte imagecreatetruecolor() allocation. */
+	private const MAX_DIMENSION   = 4096;
+	private const MAX_SCALE       = 256;
+	private const MAX_PADDING     = 1024;
+	private const MAX_UNIT        = 256;
+	private const MAX_DATA_LENGTH = 8192;
+
 	public function __construct(
 		private readonly string $data,
 		private array $options = [],
@@ -94,8 +102,7 @@ class QRCode {
 		$bg = $this->normalize_color($this->options['bc'] ?? 'FFFFFF', '#FFFFFF');
 		$fg = $this->normalize_color($this->options['fc'] ?? '000000', '#000000');
 
-		$mdRaw = $this->options['md'] ?? 1;
-		$density = (is_scalar($mdRaw) && is_numeric($mdRaw)) ? (float)$mdRaw : 1;
+		$density = $this->get_density_option();
 		list($mw, $mh) = $this->calculate_size($code, $widths);
 		if ($mw && $mh) {
 			$scale = min($w / $mw, $h / $mh);
@@ -277,10 +284,10 @@ class QRCode {
 		list($code, $widths) = $this->encode_and_calculate_size($this->data, $this->options);
 
 		$padding = [
-			'top'    => $this->get_int_option($this->options, 'pt', $this->get_int_option($this->options, 'pv', 0)),
-			'bottom' => $this->get_int_option($this->options, 'pb', $this->get_int_option($this->options, 'pv', 0)),
-			'left'   => $this->get_int_option($this->options, 'pl', $this->get_int_option($this->options, 'ph', 0)),
-			'right'  => $this->get_int_option($this->options, 'pr', $this->get_int_option($this->options, 'ph', 0)),
+			'top'    => $this->get_padding_option($this->options, 'pt', $this->get_padding_option($this->options, 'pv', 0)),
+			'bottom' => $this->get_padding_option($this->options, 'pb', $this->get_padding_option($this->options, 'pv', 0)),
+			'left'   => $this->get_padding_option($this->options, 'pl', $this->get_padding_option($this->options, 'ph', 0)),
+			'right'  => $this->get_padding_option($this->options, 'pr', $this->get_padding_option($this->options, 'ph', 0)),
 		];
 
 		$size = $code['s'][0];
@@ -337,8 +344,7 @@ class QRCode {
 
 		$colors = array($bgcolor, $fgcolor);
 
-		$mdRaw = $this->options['md'] ?? 1;
-		$density = (is_scalar($mdRaw) && is_numeric($mdRaw)) ? (float)$mdRaw : 1;
+		$density = $this->get_density_option();
 		list($width, $height) = $this->calculate_size($code, $widths);
 		if ($width && $height) {
 			$scale = min($w / $width, $h / $height);
@@ -372,49 +378,92 @@ class QRCode {
 
 	/* - - - - INTERNAL FUNCTIONS - - - - */
 
-	private function get_int_option(array $options, string $key, int $default): int {
+	/**
+	 * Read a numeric option as a finite float, or null when absent/invalid.
+	 * Rejecting INF/NAN here keeps every later int cast inside its valid range.
+	 */
+	private function numeric_option(array $options, string $key): ?float {
 		if (!isset($options[$key]) || !is_scalar($options[$key]) || !is_numeric($options[$key])) {
-			return $default;
+			return null;
 		}
-		return (int)$options[$key];
+		$number = (float)$options[$key];
+		return is_finite($number) ? $number : null;
 	}
 
-	private function get_float_option(array $options, string $key, float $default): float {
-		if (!isset($options[$key]) || !is_scalar($options[$key]) || !is_numeric($options[$key])) {
+	/** Bounded integer option. Every caller supplies finite min/max limits. */
+	private function get_int_option(array $options, string $key, int $default, int $min, int $max): int {
+		$number = $this->numeric_option($options, $key);
+		if ($number === null) {
 			return $default;
 		}
-		return (float)$options[$key];
+		if ($number < $min) return $min;
+		if ($number > $max) return $max;
+		return (int)$number;
+	}
+
+	/** Padding is non-negative and capped. */
+	private function get_padding_option(array $options, string $key, int $default): int {
+		return $this->get_int_option($options, $key, $default, 0, self::MAX_PADDING);
+	}
+
+	/** Scales keep the legacy "non-positive means default" behaviour. */
+	private function get_scale_option(array $options, string $key, float $default): float {
+		$number = $this->numeric_option($options, $key);
+		if ($number === null || $number <= 0) {
+			return $default;
+		}
+		return $number > self::MAX_SCALE ? (float)self::MAX_SCALE : $number;
+	}
+
+	/** Explicit dimensions keep the legacy "non-positive means derived" behaviour. */
+	private function get_dimension_option(array $options, string $key, int $derived): int {
+		$number = $this->numeric_option($options, $key);
+		if ($number === null) {
+			return $derived;
+		}
+		if ($number > self::MAX_DIMENSION) {
+			return self::MAX_DIMENSION;
+		}
+		$value = (int)$number;
+		return $value > 0 ? $value : $derived;
+	}
+
+	/** Module density is restricted to the documented 0..1 range. */
+	private function get_density_option(): float {
+		$number = $this->numeric_option($this->options, 'md');
+		if ($number === null) {
+			return 1.0;
+		}
+		if ($number <= 0) return 0.0;
+		if ($number >= 1) return 1.0;
+		return $number;
 	}
 
 	private function encode_and_calculate_size($data, $options) {
 		$code = $this->dispatch_encode($data, $options);
 		$widths = array(
-			$this->get_int_option($options, 'wq', 1),
-			$this->get_int_option($options, 'wm', 1),
+			$this->get_int_option($options, 'wq', 1, 0, self::MAX_UNIT),
+			$this->get_int_option($options, 'wm', 1, 0, self::MAX_UNIT),
 		);
 
 		$size     = $this->calculate_size($code, $widths);
 		$dscale   = 4;
-		$scale    = $this->get_float_option($options, 'sf', $dscale);
-		if ($scale <= 0) $scale = $dscale;
-		$scalex   = $this->get_float_option($options, 'sx', $scale);
-		if ($scalex <= 0) $scalex = $scale;
-		$scaley   = $this->get_float_option($options, 'sy', $scale);
-		if ($scaley <= 0) $scaley = $scale;
-		$dpadding = 0;
-		$padding  = $this->get_int_option($options, 'p', $dpadding);
-		$vert     = $this->get_int_option($options, 'pv', $padding);
-		$horiz    = $this->get_int_option($options, 'ph', $padding);
-		$top      = $this->get_int_option($options, 'pt', $vert);
-		$left     = $this->get_int_option($options, 'pl', $horiz);
-		$right    = $this->get_int_option($options, 'pr', $horiz);
-		$bottom   = $this->get_int_option($options, 'pb', $vert);
-		$dwidth   = ceil($size[0] * $scalex) + $left + $right;
-		$dheight  = ceil($size[1] * $scaley) + $top + $bottom;
-		$iwidth   = $this->get_int_option($options, 'w', (int)$dwidth);
-		$iheight  = $this->get_int_option($options, 'h', (int)$dheight);
-		if ($iwidth <= 0) $iwidth = (int)$dwidth;
-		if ($iheight <= 0) $iheight = (int)$dheight;
+		$scale    = $this->get_scale_option($options, 'sf', $dscale);
+		$scalex   = $this->get_scale_option($options, 'sx', $scale);
+		$scaley   = $this->get_scale_option($options, 'sy', $scale);
+		$padding  = $this->get_padding_option($options, 'p', 0);
+		$vert     = $this->get_padding_option($options, 'pv', $padding);
+		$horiz    = $this->get_padding_option($options, 'ph', $padding);
+		$top      = $this->get_padding_option($options, 'pt', $vert);
+		$left     = $this->get_padding_option($options, 'pl', $horiz);
+		$right    = $this->get_padding_option($options, 'pr', $horiz);
+		$bottom   = $this->get_padding_option($options, 'pb', $vert);
+		// Bound the derived sizes before casting: extreme scale/padding values
+		// can no longer overflow an int or request a huge GdImage allocation.
+		$dwidth   = min(self::MAX_DIMENSION, (int)ceil($size[0] * $scalex) + $left + $right);
+		$dheight  = min(self::MAX_DIMENSION, (int)ceil($size[1] * $scaley) + $top + $bottom);
+		$iwidth   = $this->get_dimension_option($options, 'w', $dwidth);
+		$iheight  = $this->get_dimension_option($options, 'h', $dheight);
 		// Clamp to avoid 0 or negative GdImage dimensions (PHP 8.5 ValueError)
 		$iwidth = max(1, $iwidth);
 		$iheight = max(1, $iheight);
@@ -480,6 +529,10 @@ class QRCode {
 	}
 
 	private function qr_encode_data($data, $ecl) {
+		// Bound work before the mode regexes scan the payload. QR capacity is
+		// far below this limit, so valid symbols are never affected.
+		$data = substr($data, 0, self::MAX_DATA_LENGTH);
+
 		$mode = $this->qr_detect_mode($data);
 		$version = $this->qr_detect_version($data, $mode, $ecl);
 		$version_group = (($version < 10) ? 0 : (($version < 27) ? 1 : 2));

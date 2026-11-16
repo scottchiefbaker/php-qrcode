@@ -131,6 +131,14 @@ request parameters when using the HTTP endpoint.
 | `wm` | `1` | Width of QR modules in units. |
 | `f` / `format` | `png` | HTTP output format. Use `svg` for SVG; all other values produce PNG. |
 
+To keep the HTTP endpoint safe from resource-exhaustion requests, numeric
+options are bounded: width and height are capped at `4096` px, scale factors
+at `256`, each padding option at `1024` px, quiet/module widths at `256`
+units, and the encoded data at `8192` bytes (well above the largest QR
+symbol). Values above these limits are clamped, non-finite numbers are
+ignored, and negative padding is treated as zero. These caps apply to the
+class API as well.
+
 ## 🖼️ Examples
 
 Default black-and-white PNG:
