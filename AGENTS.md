@@ -11,8 +11,8 @@
   as an HTTP endpoint reading `$_REQUEST`; otherwise `require` only defines
   the class. Don't break either mode.
 - A third mode lives in the same block: when run from the PHP CLI with no
-  `REQUEST_METHOD` and empty `$_REQUEST`, it parses `argv` (`key=value` or
-  `--key=value` options, first bare argument is the data) and prints
+  `REQUEST_METHOD` and empty `$_REQUEST`, it parses `argv` (`--key=value`
+  options, `--invert` flag, first bare argument is the data) and prints
   `render_ascii()` to stdout. Usage errors go to stderr with exit 1. Keep
   this branch from catching real HTTP requests.
 - Option keys are short and shared between constructor array and HTTP
@@ -45,7 +45,7 @@ failed, when the extension is missing. No linter or typecheck beyond
 php unit_tests/tests.php                 # full suite
 php -n unit_tests/tests.php              # no-extensions pass (matches CI)
 php -l qrcode.php                        # syntax check (only static check)
-php qrcode.php "HELLO" s=qr-m            # CLI: prints ASCII art to stdout
+php qrcode.php "HELLO" --s=qr-m         # CLI: prints ASCII art to stdout
 php -S localhost:8000                    # serve repo for sandbox/test pages
 # then open http://localhost:8000/qrcode-test.html or /sandbox.html
 ```

@@ -94,12 +94,13 @@ Run `qrcode.php` with the PHP CLI to print the code as ASCII art using
 half-block characters (two module rows per text line):
 
 ```sh
-php qrcode.php "HELLO WORLD" s=qr-m pv=1 ph=2
+php qrcode.php "HELLO WORLD" --s=qr-m --pv=1 --ph=2
 php qrcode.php --s=qr-h --pl=2 "https://example.com"
 ```
 
 Arguments accept the same option keys as the class and HTTP endpoint,
-written as `key=value` or `--key=value`. The first non-option argument is
+written as `--key=value`. Options must start with `--`; bare `key=value`
+tokens are not parsed as options. The first non-option argument is
 the data to encode. ASCII output is only available from the CLI; the HTTP
 endpoint continues to produce PNG and SVG.
 

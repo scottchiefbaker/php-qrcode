@@ -667,7 +667,7 @@ test('inv option accepts common false spellings', function () {
 
 test('CLI invocation prints ASCII to stdout', function () {
 	$script = __DIR__ . '/../qrcode.php';
-	$cmd = [PHP_BINARY, $script, 'HELLO', 's=qr-m'];
+	$cmd = [PHP_BINARY, $script, 'HELLO', '--s=qr-m'];
 	$proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
 	if (!is_resource($proc)) {
 		throw new TestSkipped('could not spawn php for CLI test');
