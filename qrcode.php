@@ -47,7 +47,7 @@ if (realpath(__FILE__) === realpath($_SERVER['SCRIPT_FILENAME'] ?? '')) {
 		}
 
 		if ($cli_data === '') {
-			fwrite(STDERR, "usage: php qrcode.php <data> [--invert] [key=value ...]\n");
+			fwrite(STDERR, "usage: php qrcode.php <data> [--invert] [--key=value ...]\n");
 			exit(1);
 		}
 
