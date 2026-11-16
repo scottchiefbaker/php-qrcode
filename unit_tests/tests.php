@@ -802,6 +802,13 @@ test('HTTP endpoint defaults to PNG for missing or unknown formats', function ()
 	}
 }, 'gd');
 
+test('HTTP endpoint treats non-scalar d as empty data without leaking errors', function () {
+	$output = run_endpoint(['d' => ['x'], 'f' => 'svg']);
+	assert_same(false, str_contains($output, 'Fatal error'), 'no fatal error output');
+	assert_same(false, str_contains($output, '.php'), 'no file path in output');
+	assert_same(false, str_contains($output, 'Stack trace'), 'no stack trace in output');
+});
+
 test('HTTP endpoint parses string-typed layout options like the class', function () {
 	// Over HTTP every parameter arrives as a string; the endpoint and the
 	// class API must produce the same symbol for the same options.
