@@ -544,9 +544,9 @@ test('non-string data is rejected by the constructor', function () {
 test('ASCII rendering packs two module rows per text line', function () {
 	$qr = new QRCode('HELLO', ['s' => 'qr-m', 'sf' => 1]);
 	$lines = explode("\n", rtrim($qr->render_ascii(), "\n"));
-	$width = mb_strlen($lines[0]);
+	$width = count(preg_split('//u', $lines[0], -1, PREG_SPLIT_NO_EMPTY));
 	foreach ($lines as $line) {
-		assert_same($width, mb_strlen($line), 'every ASCII line has the same width');
+		assert_same($width, count(preg_split('//u', $line, -1, PREG_SPLIT_NO_EMPTY)), 'every ASCII line has the same width');
 	}
 	$modules = svg_size($qr->render_svg());
 	assert_same($width, $modules, 'ASCII width equals SVG width at 1 px per module');
@@ -564,7 +564,7 @@ test('ASCII output matches the SVG module grid', function () {
 	$ascii = $qr->render_ascii();
 	$lines = explode("\n", rtrim($ascii, "\n"));
 	$rows = count($lines) * 2;
-	$cols = mb_strlen($lines[0]);
+	$cols = count(preg_split('//u', $lines[0], -1, PREG_SPLIT_NO_EMPTY));
 
 	$grid = [];
 	foreach ($lines as $i => $line) {
