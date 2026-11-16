@@ -35,6 +35,8 @@ if (realpath(__FILE__) === realpath($_SERVER['SCRIPT_FILENAME'] ?? '')) {
 		foreach (array_slice($argv, 1) as $arg) {
 			if (preg_match('/^--?([A-Za-z0-9_]+)=(.*)$/s', $arg, $m)) {
 				$cli_options[$m[1]] = $m[2];
+			} elseif ($arg === '--invert') {
+				$cli_options['inv'] = '0';
 			} elseif ($cli_data === '' && !str_starts_with($arg, '-')) {
 				$cli_data = $arg;
 			}
@@ -45,7 +47,7 @@ if (realpath(__FILE__) === realpath($_SERVER['SCRIPT_FILENAME'] ?? '')) {
 		}
 
 		if ($cli_data === '') {
-			fwrite(STDERR, "usage: php qrcode.php <data> [key=value ...]\n");
+			fwrite(STDERR, "usage: php qrcode.php <data> [--invert] [key=value ...]\n");
 			exit(1);
 		}
 
@@ -320,11 +322,13 @@ class QRCode {
 			$grid[$y] = $row;
 		}
 
+		$invert = $this->get_bool_option($this->options, 'inv', true);
+
 		$out = '';
 		for ($y = 0; $y < $total_h; $y += 2) {
 			for ($x = 0; $x < $total_w; $x++) {
-				$top = $grid[$y][$x];
-				$bottom = ($y + 1 < $total_h) ? $grid[$y + 1][$x] : false;
+				$top = $grid[$y][$x] !== $invert;
+				$bottom = ($y + 1 < $total_h) ? ($grid[$y + 1][$x] !== $invert) : false;
 				if ($top && $bottom) {
 					$out .= '█';
 				} elseif ($top) {
@@ -411,6 +415,18 @@ class QRCode {
 		if ($number < $min) return $min;
 		if ($number > $max) return $max;
 		return (int)$number;
+	}
+
+	/** Boolean option: "0", "false", "off", "no" (case-insensitive) are false. */
+	private function get_bool_option(array $options, string $key, bool $default): bool {
+		if (!isset($options[$key]) || !is_scalar($options[$key])) {
+			return $default;
+		}
+		$value = strtolower(trim((string)$options[$key]));
+		if ($value === '') {
+			return $default;
+		}
+		return !in_array($value, ['0', 'false', 'off', 'no'], true);
 	}
 
 	/** Padding is non-negative and capped. */
