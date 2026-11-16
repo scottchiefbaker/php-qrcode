@@ -27,32 +27,33 @@ declare(strict_types=1);
 // DEALINGS IN THE SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
-qrcode.php - Generate QR Codes. MIT license.
-
-Copyright for portions of this project are held by Kreative Software, 2016-2018.
-All other copyright for the project are held by Donald Becker, 2019
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-\****************************************************************************/
-
 if (realpath(__FILE__) === realpath($_SERVER['SCRIPT_FILENAME'] ?? '')) {
+	if (PHP_SAPI === 'cli' && !isset($_SERVER['REQUEST_METHOD']) && empty($_REQUEST)) {
+		$cli_data    = '';
+		$cli_options = [];
+
+		foreach (array_slice($argv, 1) as $arg) {
+			if (preg_match('/^--?([A-Za-z0-9_]+)=(.*)$/s', $arg, $m)) {
+				$cli_options[$m[1]] = $m[2];
+			} elseif ($cli_data === '' && !str_starts_with($arg, '-')) {
+				$cli_data = $arg;
+			}
+		}
+
+		if ($cli_data === '') {
+			$cli_data = (string)($cli_options['d'] ?? '');
+		}
+
+		if ($cli_data === '') {
+			fwrite(STDERR, "usage: php qrcode.php <data> [key=value ...]\n");
+			exit(1);
+		}
+
+		$generator = new QRCode($cli_data, $cli_options);
+		echo $generator->render_ascii();
+		exit(0);
+	}
+
 	$generator = new QRCode($_REQUEST['d'] ?? '', $_REQUEST);
 	$fRaw = $_REQUEST['f'] ?? $_REQUEST['format'] ?? 'png';
 	$fRaw = is_scalar($fRaw) ? (string)$fRaw : 'png';
@@ -270,6 +271,55 @@ class QRCode {
 		}
 		$color = substr(str_pad($color, 6, '0'), 0, 6);
 		return '#' . strtoupper($color);
+	}
+
+	public function render_ascii(): string {
+		list($code, $widths) = $this->encode_and_calculate_size($this->data, $this->options);
+
+		$padding = [
+			'top'    => $this->get_int_option($this->options, 'pt', $this->get_int_option($this->options, 'pv', 0)),
+			'bottom' => $this->get_int_option($this->options, 'pb', $this->get_int_option($this->options, 'pv', 0)),
+			'left'   => $this->get_int_option($this->options, 'pl', $this->get_int_option($this->options, 'ph', 0)),
+			'right'  => $this->get_int_option($this->options, 'pr', $this->get_int_option($this->options, 'ph', 0)),
+		];
+
+		$size = $code['s'][0];
+		$quiet = $code['q'];
+		$total_w = $size + $quiet[1] + $quiet[3] + $padding['left'] + $padding['right'];
+		$total_h = $size + $quiet[0] + $quiet[2] + $padding['top'] + $padding['bottom'];
+
+		$grid = array();
+		for ($y = 0; $y < $total_h; $y++) {
+			$row = array();
+			for ($x = 0; $x < $total_w; $x++) {
+				$mx = $x - $padding['left'] - $quiet[3];
+				$my = $y - $padding['top'] - $quiet[0];
+				$row[$x] = ($mx >= 0 && $my >= 0 && $mx < $size && $my < $size)
+					? (bool)($code['b'][$my][$mx] ?? false)
+					: false;
+			}
+			$grid[$y] = $row;
+		}
+
+		$out = '';
+		for ($y = 0; $y < $total_h; $y += 2) {
+			for ($x = 0; $x < $total_w; $x++) {
+				$top = $grid[$y][$x];
+				$bottom = ($y + 1 < $total_h) ? $grid[$y + 1][$x] : false;
+				if ($top && $bottom) {
+					$out .= '█';
+				} elseif ($top) {
+					$out .= '▀';
+				} elseif ($bottom) {
+					$out .= '▄';
+				} else {
+					$out .= ' ';
+				}
+			}
+			$out .= "\n";
+		}
+
+		return $out;
 	}
 
 	public function render_image(): \GdImage {

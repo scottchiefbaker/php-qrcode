@@ -541,6 +541,84 @@ test('non-string data is rejected by the constructor', function () {
 	assert_true($thrown, 'array data raises TypeError');
 });
 
+test('ASCII rendering packs two module rows per text line', function () {
+	$qr = new QRCode('HELLO', ['s' => 'qr-m', 'sf' => 1]);
+	$lines = explode("\n", rtrim($qr->render_ascii(), "\n"));
+	$width = mb_strlen($lines[0]);
+	foreach ($lines as $line) {
+		assert_same($width, mb_strlen($line), 'every ASCII line has the same width');
+	}
+	$modules = svg_size($qr->render_svg());
+	assert_same($width, $modules, 'ASCII width equals SVG width at 1 px per module');
+	assert_same((int)ceil($modules / 2), count($lines), 'two module rows per line');
+});
+
+test('ASCII output uses only half-block characters and spaces', function () {
+	$ascii = (new QRCode('HELLO WORLD', ['s' => 'qr-m']))->render_ascii();
+	assert_true(preg_match('/^[ █▀▄\n]+$/u', $ascii) === 1, 'only block characters and newlines');
+});
+
+test('ASCII output matches the SVG module grid', function () {
+	$qr = new QRCode('HELLO', ['s' => 'qr-m', 'sf' => 1]);
+	$cells = svg_path_cells(svg_path($qr->render_svg()));
+	$ascii = $qr->render_ascii();
+	$lines = explode("\n", rtrim($ascii, "\n"));
+	$rows = count($lines) * 2;
+	$cols = mb_strlen($lines[0]);
+
+	$grid = [];
+	foreach ($lines as $i => $line) {
+		$chars = preg_split('//u', $line, -1, PREG_SPLIT_NO_EMPTY);
+		foreach ($chars as $x => $ch) {
+			$top = in_array($ch, ['█', '▀'], true);
+			$bottom = in_array($ch, ['█', '▄'], true);
+			$grid[$i * 2][$x] = $top;
+			$grid[$i * 2 + 1][$x] = $bottom;
+		}
+	}
+
+	$svg_rows = count($cells);
+	$svg_cols = $svg_rows ? max(array_map('count', $cells)) : 0;
+	assert_true($rows >= $svg_rows, 'ASCII has at least the SVG module rows');
+	assert_true($cols >= $svg_cols, 'ASCII has at least the SVG module columns');
+	foreach ($cells as $y => $row) {
+		foreach ($row as $x => $_) {
+			assert_true($grid[$y + 4][$x + 4] ?? false, "ASCII dark cell at ($x,$y)");
+		}
+	}
+});
+
+test('CLI invocation prints ASCII to stdout', function () {
+	$script = __DIR__ . '/../qrcode.php';
+	$cmd = [PHP_BINARY, $script, 'HELLO', 's=qr-m'];
+	$proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+	if (!is_resource($proc)) {
+		throw new TestSkipped('could not spawn php for CLI test');
+	}
+	$out = stream_get_contents($pipes[1]);
+	$err = stream_get_contents($pipes[2]);
+	fclose($pipes[1]);
+	fclose($pipes[2]);
+	$status = proc_close($proc);
+	assert_same(0, $status, 'CLI exits 0 (stderr: ' . trim($err) . ')');
+	assert_true(preg_match('/[█▀▄]/u', $out) === 1, 'CLI emits block characters');
+});
+
+test('CLI without data prints usage and exits nonzero', function () {
+	$cmd = [PHP_BINARY, __DIR__ . '/../qrcode.php'];
+	$proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+	if (!is_resource($proc)) {
+		throw new TestSkipped('could not spawn php for CLI test');
+	}
+	stream_get_contents($pipes[1]);
+	$err = stream_get_contents($pipes[2]);
+	fclose($pipes[1]);
+	fclose($pipes[2]);
+	$status = proc_close($proc);
+	assert_true($status !== 0, 'nonzero exit');
+	assert_true(str_contains($err, 'usage:'), 'usage message on stderr');
+});
+
 test('marker density option changes the rendered path', function () {
 	$full = (new QRCode('HELLO', ['sf' => 4, 'md' => 1]))->render_svg();
 	$half = (new QRCode('HELLO', ['sf' => 4, 'md' => 0.5]))->render_svg();
