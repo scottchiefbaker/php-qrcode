@@ -531,6 +531,55 @@ test('invalid numeric options silently fall back to defaults', function () {
 	}
 });
 
+test('request-controlled geometry is capped to bounded values', function () {
+	assert_same(['4096', '4096'], svg_dimensions(assert_svg(new QRCode('HELLO', ['w' => 20000, 'h' => 20000]))));
+	assert_same(['4096', '4096'], svg_dimensions(assert_svg(new QRCode('HELLO', ['sf' => 1e20]))));
+	assert_same(['4096', '4096'], svg_dimensions(assert_svg(new QRCode('HELLO', ['wq' => 1e9]))));
+	// Default scale is 4, so 29 module units + 1024 padding on each side.
+	assert_same(['2164', '2164'], svg_dimensions(assert_svg(new QRCode('HELLO', ['p' => 1e9]))));
+});
+
+test('PNG rendering respects the dimension cap', function () {
+	$image = (new QRCode('HELLO', ['w' => 20000, 'h' => 20000]))->render_image();
+	assert_same(4096, imagesx($image));
+	assert_same(4096, imagesy($image));
+}, 'gd');
+
+test('extreme numeric options do not emit PHP warnings', function () {
+	foreach ([['sf' => 1e20], ['sf' => 1e309], ['p' => 1e9], ['wq' => 1e9], ['md' => 1e309]] as $options) {
+		$warnings = [];
+		set_error_handler(function (int $severity, string $message) use (&$warnings): bool {
+			$warnings[] = $message;
+			return true;
+		});
+		try {
+			assert_svg(new QRCode('HELLO', $options));
+		} finally {
+			restore_error_handler();
+		}
+		assert_same([], $warnings, 'no warnings for ' . export($options));
+	}
+});
+
+test('module density is clamped to the documented 0..1 range', function () {
+	$full = assert_svg(new QRCode('HELLO', ['md' => 1]));
+	assert_same($full, assert_svg(new QRCode('HELLO', ['md' => 5])), 'density above 1 clamps to 1');
+	assert_same($full, assert_svg(new QRCode('HELLO', ['md' => 1e309])), 'non-finite density falls back to 1');
+	$empty = assert_svg(new QRCode('HELLO', ['md' => 0]));
+	assert_same($empty, assert_svg(new QRCode('HELLO', ['md' => -3])), 'negative density clamps to 0');
+});
+
+test('oversized data payload is bounded before encoding', function () {
+	$capped = assert_svg(new QRCode(str_repeat('1', 8192), ['sf' => 1]));
+	$huge = assert_svg(new QRCode(str_repeat('1', 500000), ['sf' => 1]));
+	assert_same($capped, $huge, 'payload beyond the cap renders like a capped payload');
+});
+
+test('HTTP endpoint emits clean SVG for extreme options', function () {
+	$svg = run_endpoint(['d' => 'HELLO', 'f' => 'svg', 'sf' => '1e20']);
+	assert_true(str_starts_with($svg, '<?xml version="1.0"'), 'response starts with the XML declaration, not a PHP warning');
+});
+
 test('non-string data is rejected by the constructor', function () {
 	$thrown = false;
 	try {
