@@ -608,7 +608,7 @@ test('ASCII output uses only half-block characters and spaces', function () {
 });
 
 test('ASCII output matches the SVG module grid', function () {
-	$qr = new QRCode('HELLO', ['s' => 'qr-m', 'sf' => 1]);
+	$qr = new QRCode('HELLO', ['s' => 'qr-m', 'sf' => 1, 'inv' => '0']);
 	$cells = svg_path_cells(svg_path($qr->render_svg()));
 	$ascii = $qr->render_ascii();
 	$lines = explode("\n", rtrim($ascii, "\n"));
@@ -637,6 +637,34 @@ test('ASCII output matches the SVG module grid', function () {
 	}
 });
 
+test('ASCII output is inverted by default', function () {
+	$qr = new QRCode('HELLO', ['s' => 'qr-m', 'sf' => 1]);
+	$plain = (new QRCode('HELLO', ['s' => 'qr-m', 'sf' => 1, 'inv' => '0']))->render_ascii();
+	$inverted = $qr->render_ascii();
+	assert_true($inverted !== $plain, 'default output differs from inv=0 output');
+	$lines_plain = explode("\n", rtrim($plain, "\n"));
+	$lines_inv = explode("\n", rtrim($inverted, "\n"));
+	assert_same(count($lines_plain), count($lines_inv), 'same number of lines');
+	foreach ($lines_plain as $i => $line) {
+		$a = preg_split('//u', $line, -1, PREG_SPLIT_NO_EMPTY);
+		$b = preg_split('//u', $lines_inv[$i], -1, PREG_SPLIT_NO_EMPTY);
+		foreach ($a as $x => $ch) {
+			$top_a = in_array($ch, ['█', '▀'], true);
+			$top_b = in_array($b[$x], ['█', '▀'], true);
+			assert_true($top_a !== $top_b, "top cell flipped at ($x,$i)");
+		}
+	}
+});
+
+test('inv option accepts common false spellings', function () {
+	$base = (new QRCode('HELLO', ['s' => 'qr-m', 'inv' => '0']))->render_ascii();
+	foreach (['false', 'off', 'no', 'FALSE'] as $v) {
+		assert_same($base, (new QRCode('HELLO', ['s' => 'qr-m', 'inv' => $v]))->render_ascii(), "inv=$v disables inversion");
+	}
+	$default = (new QRCode('HELLO', ['s' => 'qr-m']))->render_ascii();
+	assert_same($default, (new QRCode('HELLO', ['s' => 'qr-m', 'inv' => '1']))->render_ascii(), 'inv=1 matches default');
+});
+
 test('CLI invocation prints ASCII to stdout', function () {
 	$script = __DIR__ . '/../qrcode.php';
 	$cmd = [PHP_BINARY, $script, 'HELLO', 's=qr-m'];
@@ -651,6 +679,23 @@ test('CLI invocation prints ASCII to stdout', function () {
 	$status = proc_close($proc);
 	assert_same(0, $status, 'CLI exits 0 (stderr: ' . trim($err) . ')');
 	assert_true(preg_match('/[█▀▄]/u', $out) === 1, 'CLI emits block characters');
+});
+
+test('CLI --invert flag swaps to the non-default orientation', function () {
+	$run = function (array $args) {
+		$cmd = array_merge([PHP_BINARY, __DIR__ . '/../qrcode.php', 'HELLO', '--s=qr-m'], $args);
+		$proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+		if (!is_resource($proc)) {
+			throw new TestSkipped('could not spawn php for CLI test');
+		}
+		$out = stream_get_contents($pipes[1]);
+		fclose($pipes[1]);
+		fclose($pipes[2]);
+		proc_close($proc);
+		return $out;
+	};
+	assert_same($run(['--inv=0']), $run(['--invert']), '--invert output matches --inv=0');
+	assert_true($run(['--invert']) !== $run([]), '--invert differs from the default');
 });
 
 test('CLI without data prints usage and exits nonzero', function () {
