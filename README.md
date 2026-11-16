@@ -26,6 +26,8 @@ require Composer:
 
 There is no installation step beyond copying the file.
 
+The current version is available as `QRCode::VERSION`
+
 ## ✨ Usage
 
 ### As a PHP class

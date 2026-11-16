@@ -139,6 +139,10 @@ function svg_path_cells(string $path): array {
 	return $cells;
 }
 
+test('library exposes a three-part dotted version string', function () {
+	assert_true((bool)preg_match('/^\d+\.\d+\.\d+$/', QRCode::VERSION));
+});
+
 test('SVG rendering produces a complete SVG document', function () {
 	$svg = assert_svg(new QRCode('HELLO WORLD'));
 	assert_true(str_contains($svg, 'fill="#FFFFFF"'), 'default background color');

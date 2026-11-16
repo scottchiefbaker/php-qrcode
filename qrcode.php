@@ -81,6 +81,8 @@ if (realpath(__FILE__) === realpath($_SERVER['SCRIPT_FILENAME'] ?? '')) {
 }
 
 class QRCode {
+	public const VERSION = '1.1.2';
+
 	/* Hard caps on request-controlled geometry. Without these, a single HTTP
 	 * request could force a multi-gigabyte imagecreatetruecolor() allocation. */
 	private const MAX_DIMENSION   = 4096;
