@@ -54,14 +54,26 @@ if (realpath(__FILE__) === realpath($_SERVER['SCRIPT_FILENAME'] ?? '')) {
 		exit(0);
 	}
 
-	$generator = new QRCode($_REQUEST['d'] ?? '', $_REQUEST);
-	$fRaw = $_REQUEST['f'] ?? $_REQUEST['format'] ?? 'png';
-	$fRaw = is_scalar($fRaw) ? (string)$fRaw : 'png';
-	$fmt = strtolower(trim($fRaw));
-	if ($fmt === 'svg') {
-		$generator->output_svg();
+	$dRaw = $_REQUEST['d'] ?? '';
+	if (is_scalar($dRaw)) {
+		$dRaw = (string)$dRaw;
 	} else {
-		$generator->output_image();
+		$dRaw = '';
+	}
+	try {
+		$generator = new QRCode($dRaw, $_REQUEST);
+		$fRaw = $_REQUEST['f'] ?? $_REQUEST['format'] ?? 'png';
+		$fRaw = is_scalar($fRaw) ? (string)$fRaw : 'png';
+		$fmt = strtolower(trim($fRaw));
+		if ($fmt === 'svg') {
+			$generator->output_svg();
+		} else {
+			$generator->output_image();
+		}
+	} catch (\Throwable $e) {
+		http_response_code(500);
+		header('Content-Type: text/plain; charset=UTF-8');
+		echo "QR code generation failed.\n";
 	}
 	exit(0);
 }
